@@ -1,0 +1,55 @@
+# =============================================================================
+# config.yaml — Simulation environment configuration
+#
+# Unity cluster paths:
+#   Home:  /home/fmahnoor1_umassd_edu         (93GB — code lives here)
+#   Work:  /work/pi_lfiondella_umassd_edu/Mahnoor  (1TB — models + logs here)
+# =============================================================================
+
+environment: "cluster"    # "local" | "cluster"
+
+# ── MODEL CONFIGURATION ───────────────────────────────────────────────────────
+models:
+
+  local:
+    # Development machine — 8B 4-bit fits on most GPUs
+    model_name: "meta-llama/Llama-3.1-8B-Instruct"
+    quantization: "4bit"
+    max_memory_gb: 11
+    use_cpu_offload: false
+
+  cluster:
+    # Unity A100 — use local AWQ path downloaded by setup_unity.sh
+    # AWQ pre-quantized is faster than bitsandbytes runtime quantization
+    model_name: "/work/pi_lfiondella_umassd_edu/Mahnoor/models/llama-3.1-8b-awq"
+    quantization: "awq"           # pre-quantized — no runtime cost
+    max_memory_gb: 40             # A100 40GB or 80GB both work
+    use_cpu_offload: false
+
+# ── CLUSTER PATHS ─────────────────────────────────────────────────────────────
+cluster:
+  work_dir:    "/work/pi_lfiondella_umassd_edu/Mahnoor"
+  model_dir:   "/work/pi_lfiondella_umassd_edu/Mahnoor/models"
+  cache_dir:   "/work/pi_lfiondella_umassd_edu/Mahnoor/huggingface_cache"
+  output_dir:  "/work/pi_lfiondella_umassd_edu/Mahnoor/SimulationLogs"
+  offload_dir: "/work/pi_lfiondella_umassd_edu/Mahnoor/offload"
+  vllm_port:   8000
+
+# ── LOCAL PATHS ───────────────────────────────────────────────────────────────
+local:
+  cache_dir:   "./hf_cache"
+  output_dir:  "./SimulationLogs"
+  offload_dir: "./offload"
+
+# ── INFERENCE BACKEND ─────────────────────────────────────────────────────────
+# vllm = fastest (recommended for cluster)
+# huggingface = direct transformers (fallback)
+inference_backend: "vllm"
+
+# ── PERFORMANCE ───────────────────────────────────────────────────────────────
+performance:
+  torch_compile: false        # Not worth it — adds 2-3min warmup per run
+  flash_attention: true       # A100 supports Flash Attention 2
+  gpu_memory_utilization: 0.85  # vLLM GPU memory fraction
+  max_num_seqs: 8             # Max concurrent sequences in vLLM
+  max_model_len: 4096         # Max context length (prompt + output)

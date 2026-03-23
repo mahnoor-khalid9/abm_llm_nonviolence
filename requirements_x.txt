@@ -1,0 +1,72 @@
+# PyTorch — install separately with the correct CUDA command, not via requirements.txt
+# Run manually: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Core simulation
+mesa==2.4.0
+numpy
+pandas
+scipy
+matplotlib
+statsmodels
+dill
+openpyxl
+
+# LLM providers
+openai
+google-generativeai
+requests
+
+# HuggingFace stack — versions pinned for lmformatenforcer compatibility
+transformers==4.44.2
+accelerate
+bitsandbytes
+safetensors
+sentencepiece
+huggingface-hub
+tokenizers
+
+# Constrained JSON decoding
+lm-format-enforcer
+
+# Build tools for flash-attn and bitsandbytes
+packaging
+ninja
+
+# Utilities
+python-dotenv
+PyPDF2
+tqdm
+notebook
+pydantic
+jinja2
+
+
+
+# torch 
+# torchvision 
+# torchaudio 
+# --index-url https://download.pytorch.org/whl/cu118
+# openpyxl
+# pandas
+# numpy
+# notebook
+# mesa==2.4.0
+# matplotlib
+# statsmodels
+# dill
+# openai
+# python-dotenv
+# lm-format-enforcer
+# transformers
+# requests
+# accelerate 
+# sentencepiece
+# google-generativeai
+# PyPDF2
+# bitsandbytes
+# safetensors
+# tqdm
+# huggingface-hub
+# packaging 
+# ninja
+# huggingface_hub 

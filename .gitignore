@@ -1,0 +1,93 @@
+# =============================================================================
+# .gitignore — NV Resistance ABM-LLM Simulation
+# =============================================================================
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+venv_gandhian_abm/
+abm-llm/
+
+# ── Environment variables (API keys — never commit these) ─────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── Simulation logs and outputs ───────────────────────────────────────────────
+SimulationLogs/
+NVResistance_BatchResults*/
+logs/
+*.db
+*.dill
+
+# ── HuggingFace model weights (large files — use HF Hub instead) ──────────────
+hf_cache/
+offload/
+*.bin
+*.safetensors
+*.gguf
+*.ggml
+models/
+
+# ── Analysis outputs ──────────────────────────────────────────────────────────
+Analysis/outputs/
+Analysis/*.csv
+Analysis/*.xlsx
+*.png
+*.pdf
+
+# ── OS files ──────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Build artifacts ───────────────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# ── SLURM job outputs (keep slurm scripts, ignore job output files) ────────────
+slurm/logs/
+logs/slurm_*.out
+logs/slurm_*.err
+logs/array_*.out
+logs/array_*.err
+logs/vllm_*.log
+
+# ── Secrets and tokens ────────────────────────────────────────────────────────
+*.pem
+*.key
+secrets.yaml
+secrets.json

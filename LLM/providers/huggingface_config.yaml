@@ -1,0 +1,50 @@
+# =============================================================================
+# huggingface_config.yaml
+#
+# Used by HuggingFaceProvider (direct transformers — fallback only).
+# Primary inference on Unity uses VLLMProvider — see vllm_provider.py.
+#
+# Paths are specific to Unity cluster layout:
+#   Home:  /home/fmahnoor1_umassd_edu       (93GB quota)
+#   Work:  /work/pi_lfiondella_umassd_edu/Mahnoor  (1TB quota — models here)
+# =============================================================================
+
+active_profile: "unity"
+
+# ── LOCAL (development machine, 12-24GB GPU) ─────────────────────────────────
+local:
+  model_name: "meta-llama/Llama-3.1-8B-Instruct"
+  quantization: "4bit"
+  max_memory_gb: 11
+  use_cpu_offload: false
+  cache_dir: "./hf_cache"
+  torch_compile: false
+  flash_attention: false
+
+# ── UNITY (A100 40/80GB) ──────────────────────────────────────────────────────
+unity:
+  # 8B AWQ quantized — fits on a single A100, ~2-4s response time
+  # Path: downloaded by setup_unity.sh to work directory
+  model_name: "/work/pi_lfiondella_umassd_edu/Mahnoor/models/llama-3.1-8b-awq"
+  quantization: "awq"             # awq = pre-quantized (fastest)
+                                  # alternatives: "4bit" (bitsandbytes), "none"
+  max_memory_gb: 40               # conservative for A100 40GB
+  use_cpu_offload: false
+  cache_dir: "/work/pi_lfiondella_umassd_edu/Mahnoor/huggingface_cache"
+  offload_dir: "/work/pi_lfiondella_umassd_edu/Mahnoor/offload"
+  torch_compile: false            # adds 2-3min warmup — not worth it for ABM
+  flash_attention: true           # A100 supports Flash Attention 2
+  enable_tf32: true               # A100 TensorFloat-32 acceleration
+
+# ── GENERATION PARAMETERS ────────────────────────────────────────────────────
+generation:
+  max_new_tokens: 150             # ZeroShot output is ~40-80 tokens — 150 is safe ceiling
+  temperature: 0                  # greedy decoding — fastest and reproducible
+  do_sample: false
+  max_retries: 3
+
+# ── SYSTEM PROMPT ─────────────────────────────────────────────────────────────
+# Kept minimal — full system prompt is in Prompts/ZeroShot/system_prompt.md
+# This is only used as fallback when prompt files are unavailable.
+system_prompt: |
+  You are a Gandhian activist agent. Respond only with the JSON decision structure requested.
