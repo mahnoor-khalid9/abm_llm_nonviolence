@@ -328,15 +328,6 @@ def _record_own_action(mem: Dict, ev: Dict) -> None:
             "response_tokens":   ev.get("response_tokens", "None"),
         }
 
-        # entry = {
-        #     "step":       ev["step"],
-        #     "position":   ev["pos"],
-        #     "event":      action,
-        #     "target":     ev["target_agent"],
-        #     "attributes": ev["embodied_attributes"],
-        #     "strategy":   ev["strategy"],
-        # }
-
 
     elif action == "kill":
         # Own death — highest priority event; narrative layer should return immediately
@@ -353,7 +344,7 @@ def _record_own_action(mem: Dict, ev: Dict) -> None:
             "event":    "jail",
             "context":  ev["context"],
         }
-    elif action in ("protest_start", "active_nonviolent", "recruiting_phase"):
+    elif action in ("protest_start", "active_nonviolent", "recruiting_phase", "active_nv"):
         entry = {
             "step":     ev["step"],
             "position": ev["pos"],

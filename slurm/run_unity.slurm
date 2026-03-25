@@ -46,8 +46,8 @@ HOME_DIR="/home/fmahnoor1_umassd_edu"
 WORK_DIR="/work/pi_lfiondella_umassd_edu/Mahnoor"
 MODEL_PATH="${WORK_DIR}/models/llama-3.1-8b-awq"
 MODEL_CACHE="${WORK_DIR}/huggingface_cache"
-PROJECT_DIR="${HOME_DIR}/pyabm-refactor"      # ← adjust if your repo is elsewhere
-VENV_PATH="${HOME_DIR}/venv_gandhian_abm"
+PROJECT_DIR="${HOME_DIR}/pyabm-llm"      # ← adjust if your repo is elsewhere
+VENV_PATH="${HOME_DIR}/venv_abm_llm"
 OUTPUT_DIR="${WORK_DIR}/SimulationLogs"        # logs go to work dir (1TB quota)
 
 # =============================================================================

@@ -189,7 +189,7 @@ def _extract_activist_movement(obs_data: Dict, self_id: int) -> str:
     if not other_activists:
         return "none"
 
-    active   = [a for a in other_activists if a.get("event") in ("movement_decision", "protest_start", "active_nonviolent")]
+    active   = [a for a in other_activists if a.get("event") in ("movement_decision", "protest_start", "active_nonviolent", "active_nv")]
     jailed   = [a for a in other_activists if a.get("event") == "jail"]
     killed   = [a for a in other_activists if a.get("event") == "kill"]
 

@@ -15,9 +15,9 @@ from typing import Any, Dict, Optional, Type, Union
 
 from jinja2 import Template
 
-from LLM.schemas import (
-    GandhianDecisionZeroShot, 
+from LLM.schemas import ( 
     GandhianMovementOutputZeroShot,
+    GandhianMovementOutputCoT
 )
 
 
@@ -51,8 +51,7 @@ class BaseProvider(ABC):
         self.user_prompt_no_memory  = self._read_file(f"{prompt_dir}/{prompt_type}/user_prompt_wo_memory.md")
         self.temperature = 0.0
         self.top_p = 1.0
-        # self.self_reflection        = self._read_file(f"{prompt_dir}/{prompt_type}/self_reflection.md")
-        # self.gandhi_activist        = self._read_file(f"{prompt_dir}/{prompt_type}/gandhi_activist.md")
+
 
     @staticmethod
     def _read_file(path: str) -> str:
@@ -104,7 +103,7 @@ class BaseProvider(ABC):
 
     def fill_self_reflection_prompt(
         self,
-        agent_output: GandhianMovementOutput,
+        agent_output: GandhianMovementOutputCoT,
         activist_local_context: dict,
     ) -> str:
         data = {
@@ -171,56 +170,12 @@ class BaseProvider(ABC):
         """Return compact JSON string from decision XML."""
         return json.dumps(self.parse_decision_xml(xml_str))
 
-
-    # ── Public interface ──────────────────────────────────────────────────────
-
-    # def ask_activist_position(
-    #     self,
-    #     activist_local_context: dict,
-    #     activist_memory: Optional[dict] = None,
-    #     use_memory: bool = True,
-    # ) -> Union[GandhianDecisionZeroShot, GandhianMovementOutputZeroShot]:
-    #     """
-    #     Build the prompt, call the model, validate the position, return output.
-    #     This is the only method callers in the simulation need to call.
-    #     """
-    #     if self.prompt_type == "ZeroShot":
-    #         response_model = GandhianMovementOutputZeroShot
-
-    #     user_prompt = self.fill_user_prompt(
-    #         activist_local_context=activist_local_context,
-    #         activist_memory=activist_memory if use_memory else None,
-    #         use_memory=use_memory,
-    #     )
-
-    #     raw = self._call_api(prompt=user_prompt, response_model=response_model)
-    #     try:
-    #         agent_output = response_model.model_validate_json(raw)
-    #     except Exception as e:
-    #         agent_output = response_model.model_validate_json(self.xml_to_json(raw))
-
-    #     agent_output._response_tokens = self._last_token_count  # attach to output
-        
-    #     # Validate chosen position is in the legal move set
-    #     # available  = self._available_positions(activist_local_context)
-    #     # chosen     = tuple(agent_output.decision.chosen_position)
-    #     # commit     = tuple(commit_step(agent_output.reasoning))
-
-    #     # if chosen not in available:
-    #     #     # if commit in available:
-    #     #         agent_output.decision.chosen_position = list(commit)
-    #     #     elif available:
-    #     #         agent_output.decision.chosen_position = list(available[0])
-
-    #     return agent_output
-
-
     def ask_activist_position(
         self,
         activist_local_context: dict,
         activist_memory: Optional[dict] = None,
         use_memory: bool = True,
-    ) -> Union[GandhianDecisionZeroShot, GandhianMovementOutputZeroShot]:
+    ) -> Union[GandhianMovementOutputZeroShot, GandhianMovementOutputCoT]:
         """
         Build the prompt, call the model, validate the position, return output.
         Retries up to 3 times — each retry appends the error to the prompt
@@ -228,6 +183,8 @@ class BaseProvider(ABC):
         """
         if self.prompt_type == "ZeroShot":
             response_model = GandhianMovementOutputZeroShot
+        else:
+            response_model = GandhianMovementOutputCoT
 
         user_prompt = self.fill_user_prompt(
             activist_local_context=activist_local_context,
@@ -248,7 +205,6 @@ class BaseProvider(ABC):
 
             try:
                 raw = self._call_api(prompt=current_prompt, response_model=response_model)
-                print(raw)
                 # Try direct JSON parse first
                 try:
                     agent_output = response_model.model_validate_json(raw)

@@ -21,7 +21,7 @@ echo "=========================================="
 
 HOME_DIR="/home/fmahnoor1_umassd_edu"
 WORK_DIR="/work/pi_lfiondella_umassd_edu/Mahnoor"
-VENV_PATH="${HOME_DIR}/venv_gandhian_abm"
+VENV_PATH="${HOME_DIR}/venv_abm_llm"
 MODEL_CACHE="${WORK_DIR}/huggingface_cache"
 MODEL_DIR="${WORK_DIR}/models"
 OFFLOAD_DIR="${WORK_DIR}/offload"

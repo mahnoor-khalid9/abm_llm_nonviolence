@@ -110,6 +110,69 @@ def _draw_grid_override(space, space_ax, agent_portrayal):
     for p in portray(space): space_ax.scatter(**p)
 
 
+
+def _draw_grid_override(space, space_ax, agent_portrayal):
+    def portray(g):
+        # We'll separate standard markers from emoji/text markers
+        standard_plots = [] # List of dicts for ax.scatter
+        text_plots = []     # List of dicts for ax.text
+
+        for i in range(g.width):
+            for j in range(g.height):
+                content = g._grid[i][j]
+                if not content: continue
+                if not hasattr(content, "__iter__"): content = [content]
+                
+                for agent in content:
+                    data = agent_portrayal(agent)
+                    
+                    # IF there is text/emoji, we handle it differently
+                    if data.get("text"):
+                        text_plots.append({
+                            "x": i, "y": j, 
+                            "s": data.get("text"), 
+                            "color": data.get("color", "black"),
+                            "size": data.get("size", 12) # fontsize
+                        })
+                    else:
+                        # Standard scatter logic
+                        standard_plots.append({
+                            "x": i, "y": j,
+                            "marker": data.get("marker", "o"),
+                            "c": data.get("color", "gray"),
+                            "s": data.get("size", 30)
+                        })
+        return standard_plots, text_plots
+
+    space_ax.set_xlim(-1, space.width); space_ax.set_ylim(-1, space.height)
+    space_ax.tick_params(left=False, right=False, labelleft=False,
+                         labelbottom=False, bottom=False)
+    space_ax.set_xticks([x + 0.5 for x in range(space.width)])
+    space_ax.set_yticks([x + 0.5 for x in range(space.height)])
+    space_ax.get_figure().tight_layout()
+    space_ax.get_figure().set_figwidth(space_ax.get_figure().get_size_inches()[1])
+    space_ax.grid(alpha=0.15)
+
+    std_p, txt_p = portray(space)
+    
+    # Draw standard agents (Citizens/Police)
+    for p in std_p:
+        space_ax.scatter(p["x"], p["y"], marker=p["marker"], c=p["c"], s=p["s"])
+        
+    # Draw Emoji Agents (Pillars/Activists)
+
+    for t in txt_p:
+        is_pillar = t["size"] >= 13  # pillars use size 13, activists use 9
+        space_ax.text(
+            t["x"], t["y"], t["s"],
+            color=t["color"],
+            ha='center', va='center',
+            fontsize=t["size"],
+            fontweight='bold',
+            fontfamily='DejaVu Sans',
+        )
+        
+
 def override_mesa_shapes():
     mesa.experimental.components.matplotlib._draw_grid = _draw_grid_override
 
@@ -141,7 +204,7 @@ class NVResistanceModel(mesa.Model):
         # ── Grid, schedule, LLM ──────────────────────────────────────────────
         self.grid       = mesa.space.SingleGrid(SizeX, SizeY, IsTorus)
         self.schedule   = mesa.time.RandomActivation(self)
-        self.chat_model = ChatModel()
+        self.chat_model = ChatModel(provider=self._log_config.provider)
 
         # ── Data collector ───────────────────────────────────────────────────
         if dataCollectorType == "singleRunVisualize":
@@ -232,12 +295,6 @@ class NVResistanceModel(mesa.Model):
         self.model_id     = id(self)
         self.init_for_viz = init_for_viz
 
-        # if not self.init_for_viz:
-        #     self.logger.log_model_init(
-        #         f"NVResistanceModel id={self.model_id} run_id={self._log_config.run_id} "
-        #         f"Grid={SizeX}x{SizeY} MaxSteps={MaxSteps} "
-        #         f"Citizen={NCitizen} Activist={NActivist} Police={NPolice} Pillar={NPillar}"
-        #     )
 
         for agent_id, type_ in enumerate(TypeLUT):
             agent_class = AGENT_CLASS_MAP[type_]
@@ -396,90 +453,7 @@ class NVResistanceModel(mesa.Model):
         with open(nlp_path, "w", encoding="utf-8") as f:
             json.dump(cognitive_recall, f, indent=4)
 
-    # ── Cascade tracker ───────────────────────────────────────────────────────
-
-    # def _update_cascade_tracker(self, current_step: int) -> Dict[str, int]:
-    #     """
-    #     Count defected instances per unique institution type.
-    #     Emit FIRST_DEFECTION log line the first time any instance of a type defects.
-    #     Return per_type dict for inclusion in the model state log.
-    #     """
-    #     per_type: Dict[str, int] = {inst: 0 for inst in UNIQUE_PILLAR_TYPES}
-    #     for a in self.schedule.agents:
-    #         if a.is_Pillar and a.defect:
-    #             per_type[a.institution_type] = per_type.get(a.institution_type, 0) + 1
-
-    #     for inst, count in per_type.items():
-    #         if count > 0 and self._first_defection_step.get(inst) is None:
-    #             self._first_defection_step[inst] = current_step
-    #             # Find the triggering pillar (lowest threshold of this type)
-    #             trigger = next(
-    #                 (a for a in sorted(
-    #                     self.schedule.agents,
-    #                     key=lambda x: getattr(x, 'defectThreshold', 9999)
-    #                 ) if a.is_Pillar and a.defect and a.institution_type == inst),
-    #                 None
-    #             )
-    #             threshold_str = (
-    #                 f"{trigger.defectThreshold:.4f}" if trigger else "unknown"
-    #             )
-    #             self.logger.log_model_state(
-    #                 current_step,
-    #                 event="FIRST_DEFECTION",
-    #                 institution=inst,
-    #                 # step=current_step,
-    #                 threshold=threshold_str,
-    #             )
-
-    #     return per_type
-
-    # def _update_cascade_tracker(self, current_step: int) -> Dict[str, int]:
-    #     """
-    #     Scan all pillar agents. Any agent whose defect flag just turned True
-    #     gets recorded in _pillar_registry with the exact step and threshold.
-
-    #     Emits:
-    #     event=FIRST_DEFECTION   first instance of an institution type to defect
-    #     event=DEFECTION         subsequent instances of the same type
-    #     """
-    #     per_type: Dict[str, int] = {inst: 0 for inst in UNIQUE_PILLAR_TYPES}
-
-    #     for a in self.schedule.agents:
-    #         if not a.is_Pillar:
-    #             continue
-
-    #         entry = self._pillar_registry[a.unique_id]
-
-    #         if a.defect:
-    #             per_type[a.institution_type] += 1
-
-    #             # First time THIS agent has been seen defected
-    #             if entry["defection_step"] is None:
-    #                 entry["defection_step"] = current_step
-
-    #                 # How many agents of this type have now defected (incl. this one)
-    #                 defection_n = sum(
-    #                     1 for e in self._pillar_registry.values()
-    #                     if e["institution"] == a.institution_type
-    #                     and e["defection_step"] is not None
-    #                 )
-
-    #                 event_name = "FIRST_DEFECTION" if defection_n == 1 else "DEFECTION"
-
-    #                 if defection_n == 1:
-    #                     self._first_defection_step[a.institution_type] = current_step
-
-    #                 self.logger.log_model_state(
-    #                     current_step,
-    #                     event=event_name,
-    #                     institution=a.institution_type,
-    #                     agent_id=a.unique_id,
-    #                     threshold=f"{a.defectThreshold:.4f}",
-    #                     defection_n=defection_n,
-    #                 )
-
-    #     return per_type
-    
+    # ── Cascade tracker ──────────────────────────────────────────────────────
     def _update_cascade_tracker(self, current_step: int) -> Dict[str, int]:
         per_type: Dict[str, int] = {inst: 0 for inst in UNIQUE_PILLAR_TYPES}
 

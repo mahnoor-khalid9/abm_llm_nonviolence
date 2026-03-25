@@ -64,7 +64,7 @@ from typing import List, Literal, Optional
 
 # ── Gandhian attribute vocabulary ─────────────────────────────────────────────
 
-GandhianAttribute = Literal[
+GandhianAttribute_x = Literal[
     "Nonviolence (Ahimsa)", "Truthfulness (Satyagraha)", "Simplicity",
     "Self-Discipline", "Empathy", "Integrity", "Courage", "Resilience",
     "Visionary Leadership", "Humility", "Compassion", "Patience",
@@ -72,6 +72,12 @@ GandhianAttribute = Literal[
     "Dedication", "Intellectual Curiosity", "Inclusiveness", "Sacrifice",
 ]
 
+
+GandhianAttribute = Literal[
+    "Nonviolence (Ahimsa)", "Truthfulness (Satyagraha)", "Empathy", 
+    "Courage", "Visionary Leadership", "Patience", "Perseverance", "Forgiveness", 
+    "Inclusiveness", "Sacrifice",
+]
 
 # ── Pillar institution vocabulary ─────────────────────────────────────────────
 #
@@ -273,9 +279,63 @@ class GandhianDecision(BaseModel):
     )
 
 
-class GandhianMovementOutput(BaseModel):
-    reasoning: CoTReasoning
-    decision: GandhianDecision
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  WITH MEMORY
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── Memory ─────────────────────────────────────────────────────
+
+LastInfluence = Literal[
+    "none",
+    "citizens_mobilized",
+    "activists_clustered",
+    "pillar_pressured",
+    "police_triggered"
+]
+
+ChangeDetected = Literal[
+    "none",
+    "more_support",
+    "more_risk",
+    "mixed"
+]
+
+# ── Situation ─────────────────────────────────────────────────
+
+Opportunity = Literal[
+    "suffering_citizens",
+    "activist_cluster",
+    "pillar",
+    "police"
+]
+
+RiskLevel = Literal[
+    "low",
+    "medium",
+    "high"
+]
+
+
+class MemoryBlock(BaseModel):
+    last_influence: LastInfluence
+    change_detected: ChangeDetected
+
+
+class SituationBlock(BaseModel):
+    primary_opportunity: Opportunity
+    secondary_opportunity: Opportunity
+    risk_level: RiskLevel
+
+
+class CoTReasoningMemory(BaseModel):
+    memory: MemoryBlock
+    situation: SituationBlock
+    
+class GandhianMovementOutputCoT(BaseModel):
+    reasoning: CoTReasoningMemory
+    decision: GandhianDecisionZeroShot
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -34,7 +34,6 @@ class LogConfig:
     prompt_type: str = "ZeroShot"
     vision:      str = "vision-4"
     base_dir:    str = "SimulationLogs"
-    # folder_name: str = "SimulationLogs"
 
     # ── Derived paths (computed once at construction) ─────────────────────────
 

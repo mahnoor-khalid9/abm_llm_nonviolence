@@ -46,5 +46,5 @@ generation:
 # ── SYSTEM PROMPT ─────────────────────────────────────────────────────────────
 # Kept minimal — full system prompt is in Prompts/ZeroShot/system_prompt.md
 # This is only used as fallback when prompt files are unavailable.
-system_prompt: |
-  You are a Gandhian activist agent. Respond only with the JSON decision structure requested.
+# system_prompt: |
+#   You are a Gandhian activist agent. Respond only with the JSON decision structure requested.
