@@ -40,14 +40,14 @@ NEARBY_PILLAR_INSTITUTIONS LOG FIELD
 import time
 import mesa, pandas, enum, numpy as np
 from matplotlib import pyplot as plt
-from mesa.experimental import JupyterViz, make_text
+# from mesa.experimental import JupyterViz, make_text
 from mesa import batchrunner
 from pathlib import Path
 import ast
 import json
 import os
 
-from LLM.schemas import PILLAR_ASSIGNMENT_LIST, UNIQUE_PILLAR_TYPES
+from LLM.schemas import PILLAR_TYPE_WEIGHTS, UNIQUE_PILLAR_TYPES
 
 ATypes = enum.Enum('ATypes', ['CITIZEN', 'ACTIVIST', 'POLICE', 'PILLAR'])
 
@@ -324,61 +324,7 @@ class ActivistAgent(NVBaseAgent):
         if n_free <= 3: return "coordinated"
         return "clustered"
 
-    # ── Observable pressure classifier ───────────────────────────────────────
-    #
-    # Replaces defectLevel (derived from private threshold) with a signal
-    # any activist could observe by looking at how many people are visibly
-    # protesting near the institution's location.
-    #
-    # The ratio is computed from agents already visible to this activist.
-    # PILLAR_PRESSURE_RADIUS = 2: count agents within 2 cells of the pillar.
-
-    # PILLAR_PRESSURE_RADIUS: int = 2
-
-    # @staticmethod
-    # def _compute_observable_pressure(
-    #     pillar_pos: tuple,
-    #     visible_agents: list,
-    #     width: int,
-    #     height: int,
-    # ) -> str:
-    #     """
-    #     Return the observable protest pressure around a pillar's position.
-
-    #     Uses only agents already visible to the activist (no new information).
-    #     The ratio protesters_near / total_near is the signal a real activist
-    #     would read by watching who is visibly active near an institution.
-
-    #     Thresholds:
-    #       > 0.30  →  "under_pressure"  (visible protest concentration)
-    #       > 0.10  →  "stirring"        (some protest activity nearby)
-    #       else    →  "stable"          (no visible protest near this institution)
-    #     """
-    #     R = ActivistAgent.PILLAR_PRESSURE_RADIUS
-    #     protesters_near = 0
-    #     total_near      = 0
-
-    #     for a in visible_agents:
-    #         if a.pos == pillar_pos:
-    #             continue
-    #         dx = abs(a.pos[0] - pillar_pos[0])
-    #         dy = abs(a.pos[1] - pillar_pos[1])
-    #         if dx > width  / 2: dx = width  - dx
-    #         if dy > height / 2: dy = height - dy
-    #         if (dx * dx + dy * dy) ** 0.5 <= R:
-    #             total_near += 1
-    #             if a.inProtest:
-    #                 protesters_near += 1
-
-    #     ratio = protesters_near / max(total_near, 1)
-    #     if ratio > 0.30:
-    #         return "under_pressure"
-    #     elif ratio > 0.10:
-    #         return "stirring"
-    #     return "stable"
-
     # ── Context builder ───────────────────────────────────────────────────────
-
     def parse_context_by_direction(self, available_spaces, pillar_info,
                                    police_info, activists_info, nv_citizen_info):
         """
@@ -386,8 +332,8 @@ class ActivistAgent(NVBaseAgent):
 
         Pillar bucket format (observable pressure, no private threshold labels):
           "pillars": {
-            "under_pressure": {"count": 1, "institutions": ["Trade Unions"]},
-            "stable":         {"count": 2, "institutions": ["State Television", "Central Bank"]}
+            "defected":       ["Trade Unions"],
+            "stable":         ["State Television", "Central Bank"]
           }
 
         The LLM sees "Trade Unions is under pressure" derived from visible
@@ -429,22 +375,17 @@ class ActivistAgent(NVBaseAgent):
             directions[d]["citizens"][cat] = directions[d]["citizens"].get(cat, 0) + 1
 
         # Pillars — observable pressure + institution type (no private threshold info)
+        # Pillars — defected or stable
         for p in pillar_info:
-            d    = gd(p['position'])
+            d   = gd(p['position'])
             inst = p.get('institution_type', 'Unknown')
-
-            # Status is either defected (observable) or an observable pressure level
-            if p['defectStatus']:
-                cat = "defected"
-            else:
-                cat = p.get('pressure', 'stable')   # under_pressure / stirring / stable
+            cat  = "defected" if p['defectStatus'] else "stable"
 
             bucket = directions[d]["pillars"]
             if cat not in bucket:
-                bucket[cat] = {"count": 0, "institutions": []}
-            bucket[cat]["count"] += 1
-            if inst not in bucket[cat]["institutions"]:
-                bucket[cat]["institutions"].append(inst)
+                bucket[cat] = []
+            if inst not in bucket[cat]:
+                bucket[cat].append(inst)
 
         for p in police_info:
             d   = gd(p['position'])
@@ -628,13 +569,14 @@ class ActivistAgent(NVBaseAgent):
             elapsed: float         = 0.0
             activist_response      = None
             response_tokens = "N/A"
-
+            previous_error = None
             for attempt in range(3):
                 try:
                     t0 = time.time()
                     activist_response = self.model.chat_model.ask_activist_position(
                         activist_local_context=activist_local_context,
                         activist_memory=activist_memory,
+                         previous_error=previous_error,
                     )
                     elapsed = time.time() - t0
                     elapsed = f"{elapsed:.3f}s"
@@ -651,6 +593,7 @@ class ActivistAgent(NVBaseAgent):
                     break
 
                 except Exception as exc:
+                    previous_error = str(exc)
                     self.model.logger.log_error(self, f"LLM attempt {attempt+1}/3 failed: {exc}")
                     activist_response = None
                     time.sleep(2 ** attempt)
@@ -678,7 +621,14 @@ class ActivistAgent(NVBaseAgent):
             context_serializable = make_serializable(
                 summarize_local_context(activist_local_context)
             )
-            # memory_serializable = make_serializable(activist_memory)
+            try:
+                response_serializable = make_serializable(
+                    activist_response.reasoning.model_dump()   
+                ) if activist_response else None
+            except:
+                response_serializable = getattr(activist_response, "_reasoning", "N/A")
+                # "ZeroShot"
+                                        
             self.model.logger.log_agent_event(
                 self,
                 event="movement_decision",
@@ -692,6 +642,7 @@ class ActivistAgent(NVBaseAgent):
                 primary_attribute=primary_attribute,
                 call_to_action=call_to_action,
                 memory=activist_memory,
+                llm_response=response_serializable,
                 context={
                     **context_serializable,
                     # Social coordination
@@ -847,9 +798,7 @@ class PoliceAgent(NVBaseAgent):
             self.ruleP()
         self.ruleD()
 
-
 # ── PillarAgent ───────────────────────────────────────────────────────────────
-
 class PillarAgent(NVBaseAgent):
     def __init__(self, unique_id, agent_type, model):
         super().__init__(unique_id, agent_type, model)
@@ -858,12 +807,14 @@ class PillarAgent(NVBaseAgent):
         self.defectThreshold = self.model.const["defectThreshold"] + (self.model.random.normalvariate(0, 1) * self.model.const["defectStDev"])
         self.defectThreshold = max(0.01, self.defectThreshold)
         self.defectLevel = None
-        self.institution_type = "Unknown"                            # placeholder
+        self.pillar_identity = None
+        self.institution_type = "Unknown"
 
     def _inject_pillar_identity(self, threshold: float, institution_type: str) -> None:
         """Called once by resistance_model after sort-then-assign."""
-        self.defectThreshold  = threshold
         self.institution_type = institution_type
+        self.pillar_identity  = (institution_type, threshold)
+
 
     def ruleD(self):
         """
