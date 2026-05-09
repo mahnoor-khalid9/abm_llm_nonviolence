@@ -1,56 +1,60 @@
 """
 resistance_model.py
-
-SORT-THEN-ASSIGN — USING PILLAR_ASSIGNMENT_LIST
-  Previous versions used rank % N_PILLAR_TYPES (cycling formula).
-  This version uses PILLAR_ASSIGNMENT_LIST[rank] directly.
-
-  PILLAR_ASSIGNMENT_LIST is a flat 24-element list where:
-    index 0–2   → "Universities & Students"   (3 instances, lowest thresholds)
-    index 3–6   → "Trade Unions"              (4 instances)
-    index 7–9   → "Religious Institutions"    (3 instances)
-    index 10–11 → "Professional Associations" (2 instances)
-    index 12–13 → "Independent Media"         (2 instances)
-    index 14–15 → "Business Community"        (2 instances)
-    index 16–17 → "Civil Service"             (2 instances)
-    index 18    → "Local Government"          (1 instance)
-    index 19    → "Parliament"                (1 instance)
-    index 20    → "Supreme Court"             (1 instance)
-    index 21    → "Electoral Commission"      (1 instance)
-    index 22    → "State Television"          (1 instance)
-    index 23    → "Central Bank"              (1 instance, highest threshold)
-
-  This design directly reflects NAVCO historical frequency data:
-  institutions that appear as early defectors in more campaigns get
-  more instances at lower threshold ranks.
-
-  Verified against actual Chenoweth run (thresholds 0.0359–0.0666):
-    Universities & Students  → 0.0359, 0.0385, 0.0410
-    Trade Unions             → 0.0437, 0.0448, 0.0451, 0.0472
-    ...
-    State Television         → 0.0650
-    Central Bank             → 0.0666
-
+ 
+PILLAR INSTITUTION ASSIGNMENT — HAMILTON PROPORTIONAL METHOD
+  Previous versions sorted pillars by defectThreshold rank and assigned
+  institution types by indexing into a flat PILLAR_TYPE_WEIGHTS list.
+ 
+  This version uses allocate_pillars_proportional(), which implements the
+  Hamilton/Largest Remainder method:
+    1. Compute each institution type's quota: (weight / total_weight) * NPillar
+    2. Floor all quotas → initial allocation
+    3. Distribute remaining seats to types with largest fractional remainders,
+       with random tie-breaking for equal remainders
+    4. Shuffle the result so same-type instances are not placed consecutively
+ 
+  PILLAR_TYPE_WEIGHTS is a Dict[str, float] imported from LLM.schemas,
+  keyed by the eight institution types in UNIQUE_PILLAR_TYPES:
+    "Educational System"
+    "Religious Institution"
+    "Business Community"
+    "Civil Service"
+    "Local Government"
+    "Judiciary Institution"
+    "Legislative Institution"
+    "State-Supported Media"
+ 
+  Institution types with higher weights receive more pillar agent instances,
+  reflecting NAVCO historical frequency data: institutions that appear as
+  early defectors in more campaigns receive larger weight and are therefore
+  more represented in the simulation.
+ 
 DEFECTION RULE — UNCHANGED
   active_protestors_nearby / total_agents_nearby > defectThreshold
-  Identical for every pillar.  Identical to police ruleD.
-  Institution type is a label — it changes nothing about the mathematics.
-
-CASCADE TRACKING
-  _first_defection_step: records the first step any instance of each of the
-  13 unique institution types defects.  Emits a FIRST_DEFECTION log line once
-  per type per run.
-
-  defection_by_type: logged every step as a JSON dict keyed by all 13 types.
-  Combined with step number, reconstructs the full cascade timeline across
-  100 runs without any post-processing.
+  Identical for every pillar. Identical to PoliceAgent.ruleD().
+  Institution type is a label only — it changes nothing about the mathematics.
+ 
+CASCADE TRACKING — TWO COMPLEMENTARY STRUCTURES
+  _pillar_registry: Dict[int, dict]
+    Per-agent defection record, keyed by unique_id, built at init and
+    updated by _update_cascade_tracker() on every step.
+    Fields: institution, threshold, defection_step (None until defected).
+    Provides per-instance resolution: which exact agent defected when.
+ 
+  _first_defection_step: Dict[str, Optional[int]]
+    Per-institution-type first defection step, keyed by UNIQUE_PILLAR_TYPES.
+    Populated by _update_cascade_tracker() the first time any instance of
+    each institution type defects. Used by get_cascade_summary() to
+    reconstruct the cascade order across runs without post-processing.
 """
+
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Dict, Optional
+from typing import List, Dict, Optional
+import random
 import time 
 import mesa
 import numpy as np
@@ -66,12 +70,16 @@ from LLM.nlp_memory import generate_neighborhood_memory, generate_gandhian_memor
 from LLM.chat_model import ChatModel
 from Logging.log_config import LogConfig, DEFAULT_LOG_CONFIG
 from Logging.simulation_logger import SimLogger
-from LLM.schemas import PILLAR_ASSIGNMENT_LIST, UNIQUE_PILLAR_TYPES
+from LLM.schemas import PILLAR_TYPE_WEIGHTS, UNIQUE_PILLAR_TYPES
 
 
 # ── Mesa shape override ───────────────────────────────────────────────────────
 
 def _draw_grid_override(space, space_ax, agent_portrayal):
+    """
+    Scatter-only grid renderer (superseded by the second definition below).
+    Kept for reference. Not active at runtime.
+    """
     def portray(g):
         x = [[]]; y = [[]]; s = [[]]; c = [[]]; ms = ['o']
         for i in range(g.width):
@@ -112,8 +120,27 @@ def _draw_grid_override(space, space_ax, agent_portrayal):
 
 
 def _draw_grid_override(space, space_ax, agent_portrayal):
+    """
+    Custom Mesa grid renderer supporting both scatter markers and emoji/text labels.
+ 
+    Separates agents into two render passes:
+      - Standard agents (Citizens, Police): rendered via ax.scatter with
+        marker shapes and colours defined by agent_portrayal().
+      - Text/emoji agents (Activists, Pillars): rendered via ax.text,
+        distinguished by font size (pillars: size >= 13, activists: size 9).
+ 
+    This function shadows the scatter-only definition above. It is registered
+    via override_mesa_shapes(), which patches
+    mesa.experimental.components.matplotlib._draw_grid before any
+    visualisation is initialised.
+    """
     def portray(g):
-        # We'll separate standard markers from emoji/text markers
+        """
+        Separate all grid agents into scatter-renderable and text-renderable lists.
+ 
+        Returns (standard_plots, text_plots) where standard_plots contains
+        dicts for ax.scatter and text_plots contains dicts for ax.text.
+        """
         standard_plots = [] # List of dicts for ax.scatter
         text_plots = []     # List of dicts for ax.text
 
@@ -174,12 +201,30 @@ def _draw_grid_override(space, space_ax, agent_portrayal):
         
 
 def override_mesa_shapes():
+    """
+    Patch Mesa's internal grid drawing function with _draw_grid_override.
+ 
+    Must be called before JupyterViz or any other Mesa visualisation is
+    initialised. Enables mixed scatter (Citizens, Police) and text/emoji
+    (Activists, Pillars) rendering on the same grid canvas.
+    """
     mesa.experimental.components.matplotlib._draw_grid = _draw_grid_override
 
-
 # ── NVResistanceModel ─────────────────────────────────────────────────────────
-
 class NVResistanceModel(mesa.Model):
+    """
+    Agent-based model of nonviolent resistance inspired by Chenoweth & Stephan.
+ 
+    Simulates four interacting agent populations on a toroidal grid:
+      - CitizenAgent    — civilian population; may activate into nonviolent protest
+      - ActivistAgent   — committed nonviolent leaders; LLM-guided or rule-based
+      - PoliceAgent     — regime enforcement; may arrest, kill, or defect
+      - PillarAgent     — institutional pillars of the regime; may defect under pressure
+ 
+    The model tests whether LLM-guided activists, reasoning from Gandhian principles
+    and compressed episodic memory, produce movement dynamics consistent with
+    Chenoweth's empirical findings on nonviolent campaign success.
+    """
     def __init__(
         self,
         MaxSteps=200, SizeX=40, SizeY=40, IsTorus=True,
@@ -193,6 +238,55 @@ class NVResistanceModel(mesa.Model):
         dataCollectorType="singleRunVisualize", seed=None, init_for_viz=False,
         log_config: LogConfig = None,
     ):
+        """
+        Initialise the nonviolent resistance simulation.
+ 
+        Sets up the grid, schedule, LLM chat model, data collectors, constants,
+        and all agent populations. After agent placement, assigns institution
+        types to pillar agents proportionally using the Hamilton method, then
+        builds the pillar registry and computes initial defect-level labels.
+ 
+        Parameters
+        ----------
+        MaxSteps : int
+            Maximum simulation steps. The run is forced to outcome 3 (draw)
+            if this is reached without a victory condition.
+        SizeX, SizeY : int
+            Grid dimensions. Total cells = SizeX × SizeY.
+        IsTorus : bool
+            Whether the grid wraps toroidally (edges connect).
+        PctCitizen, PctActivist, PctPolice, PctPillar : float
+            Percentage of grid cells occupied by each agent type at init.
+        AgentVision : int
+            Default Moore-neighbourhood vision radius for all agents.
+        ActivistSearchVision : int
+            Extended vision radius used by activist agents in strategies 2 and 4.
+        StartLegitimacy : float
+            Initial government legitimacy [0.0, 1.0]. Decremented on kill
+            backfire events via BackfireCoeff.
+        PillarProxStrat : int
+            Activist movement strategy:
+              0 = random
+              1 = nearest pillar (normal vision)
+              2 = weakest pillar (extended vision)
+              3 = LLM-guided (normal vision)
+              4 = LLM-guided (extended vision)
+        NVSuccessPct : float
+            Percentage of pillar agents that must defect for resistance victory
+            (stored internally as a fraction, divided by 100).
+        dataCollectorType : str
+            "singleRunVisualize" — collects live counts for interactive display.
+            "batchRun"           — collects summary scalars for batch analysis.
+        seed : int or None
+            Random seed forwarded to Mesa. Controls agent placement and all
+            stochastic rule outcomes for reproducibility.
+        init_for_viz : bool
+            When True, suppresses heavy init logging (used by the visualisation
+            wrapper to avoid polluting the log on non-research launches).
+        log_config : LogConfig or None
+            Logging and path configuration. Defaults to DEFAULT_LOG_CONFIG.
+        """
+
         super().__init__()
 
         # ── Logging ───────────────────────────────────────────────────────────
@@ -204,7 +298,7 @@ class NVResistanceModel(mesa.Model):
         # ── Grid, schedule, LLM ──────────────────────────────────────────────
         self.grid       = mesa.space.SingleGrid(SizeX, SizeY, IsTorus)
         self.schedule   = mesa.time.RandomActivation(self)
-        self.chat_model = ChatModel(provider=self._log_config.provider)
+        self.chat_model = ChatModel(provider=self._log_config.provider, prompt_type=self._log_config.prompt_type)
 
         # ── Data collector ───────────────────────────────────────────────────
         if dataCollectorType == "singleRunVisualize":
@@ -303,7 +397,7 @@ class NVResistanceModel(mesa.Model):
             self.schedule.add(agent)
 
         # ── Sort-then-assign ──────────────────────────────────────────────────
-        self._assign_institution_types_by_threshold(NPillar)
+        self._assign_institution_types_proportional(NPillar)
 
         # ── Per-agent defection registry (built once, updated each step) ──────────
         # Keyed by unique_id. Records exactly when and at what threshold each
@@ -332,7 +426,6 @@ class NVResistanceModel(mesa.Model):
                 )
             ]
 
-
             # Instance count per type — quick sanity check
             type_counts: Dict[str, int] = {}
             for entry in pillar_registry:
@@ -360,35 +453,154 @@ class NVResistanceModel(mesa.Model):
         self.running  = True
 
     # ── Sort-then-assign ──────────────────────────────────────────────────────
-
-    def _assign_institution_types_by_threshold(self, NPillar: int) -> None:
+    def allocate_pillars_proportional(
+        self,
+        pillar_weights: Dict[str, float],
+        n_total_agents: int,
+    ) -> List[str]:
+        
         """
-        Draw individual thresholds onto each PillarAgent, sort ascending,
-        then assign institution types from PILLAR_ASSIGNMENT_LIST[rank].
+        Allocate pillar agents to institution types using the Hamilton method.
+ 
+        Ensures exactly n_total_agents labels are produced while respecting
+        the proportional weights of each institution type. Fractional remainder
+        seats are distributed to the types with the largest remainders; ties
+        are broken by a locally-seeded shuffle that does not affect global
+        random state.
+ 
+        Parameters
+        ----------
+        pillar_weights : Dict[str, float]
+            Mapping of institution type → relative weight, as defined in
+            PILLAR_TYPE_WEIGHTS. Weights need not sum to 1; they are
+            normalised internally.
+        n_total_agents : int
+            Total number of pillar agents to assign. The returned list has
+            exactly this length.
+        random_seed : int
+            Passed to random.Random() to create an isolated RNG instance
+            used only for tie-breaking and the final shuffle. Does not
+            mutate the global random state.
+ 
+        Returns
+        -------
+        List[str]
+            Flat list of institution type strings, length == n_total_agents,
+            shuffled so same-type instances are not placed consecutively.
+ 
+        Example
+        -------
+        weights = {
+            "Educational System":    2.0,
+            "Religious Institution": 1.5,
+            "Business Community":    1.0,
+            "Civil Service":         1.0,
+        }
+        result = allocate_pillars_proportional(weights, 6, random_seed=42)
+        # Quotas: [2.18, 1.64, 1.09, 1.09] → floors [2, 1, 1, 1] → 1 seat left
+        # Largest remainder: Educational System (0.18) gets +1
+        # Final counts: {"Educational System": 3, others: 1 each}
+        # Returned as shuffled flat list of length 6.
+        """
+        random_seed = random.Random(random_seed)
 
-        Each pillar draws its own threshold from N(DefectThresh, DefectThreshStDev).
-        After sorting, the pillar with the lowest threshold gets rank 0
-        (Educational System) and the highest gets rank 23 (State Media).
+        pillars = list(pillar_weights.keys())
+        weights = np.array([pillar_weights[p] for p in pillars])
+        total_weight = weights.sum()
+        
+        # Step 1: Calculate quotas
+        quotas = (weights / total_weight) * n_total_agents
+        
+        # Step 2: Initial allocation (floor)
+        allocation = np.floor(quotas).astype(int)
+        
+        # Step 3: Calculate how many seats remain
+        remaining = n_total_agents - allocation.sum()
+        
+        if remaining > 0:
+            # Step 4: Get fractional parts (remainders)
+            remainders = quotas - allocation
+            
+            # Create list of (pillar_index, remainder) and shuffle for tie-breaking
+            pillar_remainders = list(enumerate(remainders))
+            random_seed.shuffle(pillar_remainders)  # Random tie-breaking
+            
+            # Sort by remainder (descending), ties resolved by shuffle order
+            pillar_remainders.sort(key=lambda x: x[1], reverse=True)
+            
+            # Step 5: Give +1 to top 'remaining' pillars
+            for i in range(remaining):
+                pillar_idx = pillar_remainders[i][0]
+                allocation[pillar_idx] += 1
+        
+        # Step 6: Build flat list
+        result = []
+        for pillar, count in zip(pillars, allocation):
+            result.extend([pillar] * count)
+        
+        # Shuffle the list so same pillar types aren't consecutive
+        random_seed.shuffle(result)
+        
+        return result
+
+
+    # ── Integration into your class ──────────────────────────────────
+
+    def _assign_institution_types_proportional(self, NPillar: int) -> None:
+        """
+        Assign institution types to all PillarAgents using proportional allocation.
+ 
+        Calls allocate_pillars_proportional() with PILLAR_TYPE_WEIGHTS and
+        NPillar, then injects the resulting institution type into each pillar
+        agent via _inject_pillar_identity(). Institution types are assigned in
+        the shuffled order returned by allocate_pillars_proportional() — there
+        is no threshold sorting; thresholds and institution labels are
+        independent.
+ 
+        Logs a warning if the number of PillarAgents found in the schedule
+        differs from NPillar (can occur if grid placement failed for some agents
+        due to a full grid).
+ 
+        Parameters
+        ----------
+        NPillar : int
+            Expected number of pillar agents, used as n_total_agents for the
+            Hamilton allocation.
         """
         pillars = [a for a in self.schedule.agents if a.is_Pillar]
-
+        
         if len(pillars) != NPillar:
             self.logger.log_model_init(
                 f"WARN: NPillar={NPillar} but {len(pillars)} PillarAgents found."
             )
+    
+        # Allocate using Hamilton method
+        pillar_type_list = self.allocate_pillars_proportional(
+            pillar_weights=PILLAR_TYPE_WEIGHTS,
+            n_total_agents=NPillar,
+        )
+        
+        # Assign to agents
+        for pillar_agent, institution_type in zip(pillars, pillar_type_list):
+            pillar_agent._inject_pillar_identity(pillar_agent.defectThreshold, institution_type)
 
-        # 1. Sort pillars by their threshold ascending
-        pillars_sorted = sorted(pillars, key=lambda a: a.defectThreshold)
-
-        # 2. Assign institution type by rank
-        n_assignment = len(PILLAR_ASSIGNMENT_LIST)
-        for rank, pillar in enumerate(pillars_sorted):
-            pillar.institution_type = PILLAR_ASSIGNMENT_LIST[rank % n_assignment]
-            # ADD LOGGING HERE 
-            # pillar._inject_pillar_identity(pillar.defectThreshold, pillar.institution_type)
-      
     # ── Spatial helpers ───────────────────────────────────────────────────────
     def get_empty_spaces_in_vision(self, agent, radius):
+        """
+        Return all empty grid cells within the Moore neighbourhood of agent.
+ 
+        Parameters
+        ----------
+        agent : NVBaseAgent
+            Agent whose position is used as the centre of the search.
+        radius : int
+            Moore neighbourhood radius to search.
+ 
+        Returns
+        -------
+        List[Tuple[int, int]]
+            List of (x, y) positions that are currently unoccupied.
+        """
         neighborhood = self.grid.get_neighborhood(
             pos=agent.pos, moore=True, include_center=False, radius=radius
         )
@@ -397,6 +609,37 @@ class NVResistanceModel(mesa.Model):
     # ── Memory retrieval ──────────────────────────────────────────────────────
 
     def retrieve_agent_cognitive_memory(self, agent_id, step):
+        """
+        Load an agent's cognitive memory from the NLP memory file for step - 1.
+ 
+        Called by ActivistAgent.step() before ruleM() so the agent has access
+        to the previous step's self-reflection and environmental observation
+        when making its movement decision.
+ 
+        Returns None silently in two expected cases:
+          - step == 0: no previous step exists yet.
+          - The agent has no entry in the memory file (e.g. non-LLM strategies
+            do not generate movement_decision events, so no memory is written).
+ 
+        Parameters
+        ----------
+        agent_id : int
+            Unique ID of the activist agent requesting memory.
+        step : int
+            Current simulation step. Memory is read from step - 1.
+ 
+        Returns
+        -------
+        dict or None
+            Cognitive memory dict with structure:
+              {
+                "cognitive_memory": {
+                  "self_reflection":           str,
+                  "environmental_observation": str,
+                }
+              }
+            Returns None if the file is absent or the agent has no entry.
+        """
         prev_step = step - 1
         if prev_step < 0:
             return None
@@ -415,6 +658,38 @@ class NVResistanceModel(mesa.Model):
 
     # ── Memory pipeline ───────────────────────────────────────────────────────
     def process_step_memories(self, step_num, vision_radius=4):
+        """
+        Flush, close, and convert a step log into cognitive memories on disk.
+ 
+        Called at the start of each model step to process the PREVIOUS step's
+        log before any agent reads memory this step. Full pipeline:
+          1. flush_step  — write any buffered log entries to disk
+          2. close_step  — finalise and close the step log file
+          3. get_activist_neighborhood_memories() — parse log into raw memory
+             dicts, applying toroidal distance filtering at vision_radius
+          4. save_activist_memories_json() — write raw memory to disk
+          5. _convert_raw_to_cognitive_memories() — generate NLP narratives
+             and write cognitive memory JSON consumed by
+             retrieve_agent_cognitive_memory()
+ 
+        Returns False immediately (without error) if the step log file does
+        not exist — this is the expected behaviour for step -1 (before any
+        agents have acted).
+ 
+        Parameters
+        ----------
+        step_num : int
+            Step number whose log should be processed. Typically current_step - 1.
+        vision_radius : int
+            Radius used to filter neighbourhood events in raw memory extraction.
+            Should match the activist vision radius for the active strategy.
+ 
+        Returns
+        -------
+        bool
+            True if memories were successfully processed; False if the log
+            file for step_num does not exist.
+        """
         self.logger.flush_step(step_num)
         self.logger.close_step(step_num)
 
@@ -430,6 +705,31 @@ class NVResistanceModel(mesa.Model):
         return True
 
     def _convert_raw_to_cognitive_memories(self, step):
+        """
+        Convert raw memory JSON into NLP narrative memories and write to disk.
+ 
+        Reads the raw memory file for the given step, generates two narrative
+        strings per activist agent via the nlp_memory functions, and writes
+        the result as the cognitive memory JSON that will be consumed by
+        retrieve_agent_cognitive_memory() in the following step.
+ 
+        Output structure per agent_id key:
+          {
+            "cognitive_memory": {
+              "self_reflection":           str,  # generate_gandhian_memory()
+              "environmental_observation": str,  # generate_neighborhood_memory()
+            }
+          }
+ 
+        Also logs the first 120 characters of each self_reflection to the
+        narrative log for quick human inspection during a run.
+ 
+        Parameters
+        ----------
+        step : int
+            Step number whose raw memory file should be converted.
+            Reads from memory_raw_path(step), writes to memory_nlp_path(step).
+        """
         raw_path = self._log_config.memory_raw_path(step)
         nlp_path = self._log_config.memory_nlp_path(step)
         if not os.path.exists(raw_path):
@@ -455,6 +755,31 @@ class NVResistanceModel(mesa.Model):
 
     # ── Cascade tracker ──────────────────────────────────────────────────────
     def _update_cascade_tracker(self, current_step: int) -> Dict[str, int]:
+        """
+        Update per-agent and per-institution-type defection records.
+ 
+        For each pillar agent that has defected this step or earlier:
+          - On first detection (defection_step is None in _pillar_registry),
+            records current_step in _pillar_registry for that agent.
+          - If this is also the first instance of its institution type to
+            defect, records current_step in _first_defection_step.
+          - Emits a DEFECTION model state log event on the step each
+            individual agent's defection is first recorded.
+ 
+        Called once per model step after schedule.step().
+ 
+        Parameters
+        ----------
+        current_step : int
+            The step number at which defections are being checked.
+ 
+        Returns
+        -------
+        Dict[str, int]
+            Count of currently defected pillar agents per institution type.
+            All UNIQUE_PILLAR_TYPES are present as keys; value is 0 for
+            types with no defected instances.
+        """
         per_type: Dict[str, int] = {inst: 0 for inst in UNIQUE_PILLAR_TYPES}
 
         for a in self.schedule.agents:
@@ -464,6 +789,10 @@ class NVResistanceModel(mesa.Model):
                 per_type[a.institution_type] += 1
                 if self._pillar_registry[a.unique_id]["defection_step"] is None:
                     self._pillar_registry[a.unique_id]["defection_step"] = current_step
+                    # Track first defection of this institution type
+                    if self._first_defection_step[a.institution_type] is None:
+                        self._first_defection_step[a.institution_type] = current_step
+                        
                     self.logger.log_model_state(
                         current_step,
                         event="DEFECTION",
@@ -476,6 +805,30 @@ class NVResistanceModel(mesa.Model):
     # ── Grievance / defect level updates ─────────────────────────────────────
 
     def update_citizen_grievance_levels(self):
+        """
+        Classify each citizen's grievance into tertiles and update grievanceLevel.
+ 
+        Computes the 33rd and 66th percentile of current grievance values across
+        all living citizen agents, then assigns each citizen:
+          "low"    — grievance ≤ 33rd percentile
+          "medium" — grievance ≤ 66th percentile
+          "high"   — otherwise
+ 
+        grievanceLevel feeds into parse_context_by_direction(), where citizens
+        with grievanceLevel == "high" are labelled "suffering" in the directional
+        context sent to the LLM activist agent.
+ 
+        Called once per model step after schedule.step().
+ 
+        Returns
+        -------
+        str
+            Space-separated key=value string for inclusion in the model state
+            log, e.g.:
+              "GrievanceLow=400 GrievanceMedium=380 GrievanceHigh=370
+               q33=0.123 q66=0.234"
+            Returns an empty string if no citizen agents are alive.
+        """
         citizens = [a for a in self.schedule.agents if a.is_Citizen]
         if not citizens:
             return ""
@@ -493,6 +846,22 @@ class NVResistanceModel(mesa.Model):
 
 
     def update_defect_levels(self):
+        """
+        Classify each pillar agent's defection susceptibility into tertiles.
+ 
+        Computes the 33rd and 66th percentile of defectThreshold values across
+        all pillar agents, then assigns each pillar a defectLevel label:
+          "high"   — defectThreshold ≤ 33rd percentile (defects earliest)
+          "medium" — defectThreshold ≤ 66th percentile
+          "low"    — otherwise (defects latest or not at all)
+ 
+        Called once at model initialisation. Since defectThreshold is a fixed
+        per-agent attribute, defectLevel does not change during a run.
+ 
+        Note: defectLevel is an internal bookkeeping label used for researcher
+        inspection only. It is NOT passed to the LLM — activist agents observe
+        only defectStatus (defected / stable) via parse_context_by_direction().
+        """
         agents = [a for a in self.schedule.agents if a.is_Pillar]
         if not agents:
             return
@@ -501,7 +870,7 @@ class NVResistanceModel(mesa.Model):
         counts     = {"low": 0, "medium": 0, "high": 0}
         for a in agents:
             if a.defectThreshold <= q1:   a.defectLevel = "high";   counts["high"]   += 1
-            if a.defectThreshold <= q2: a.defectLevel = "medium"; counts["medium"] += 1
+            elif a.defectThreshold <= q2: a.defectLevel = "medium"; counts["medium"] += 1
             else:                         a.defectLevel = "low";    counts["low"]    += 1
         self.logger.log_model_state(
             self.schedule.steps, event="defect_levels",
@@ -510,8 +879,25 @@ class NVResistanceModel(mesa.Model):
         )
 
     # ── Victory condition ─────────────────────────────────────────────────────
-
     def check_victory_condition(self):
+        """
+        Evaluate whether a terminal outcome has been reached this step.
+ 
+        Checks two conditions in priority order:
+          1. Resistance victory (code 2): the fraction of defected pillar agents
+             exceeds NVSuccessPct. Checked first because pillar collapse is the
+             primary Chenoweth success criterion.
+          2. Regime victory (code 1): the count of alive nonviolent agents
+             (all activists + citizens with activeNV == True) falls to or below
+             nNVthreshold. Movement has been suppressed below critical mass.
+ 
+        Returns
+        -------
+        int
+            0 — no terminal condition; simulation continues.
+            1 — regime victory: nonviolent resistance suppressed.
+            2 — resistance victory: sufficient institutional defections achieved.
+        """
         pillarAgents = [x for x in self.schedule.agents if x.is_Pillar]
         if pillarAgents:
             pillar_defect_pct = (
@@ -530,6 +916,29 @@ class NVResistanceModel(mesa.Model):
     # ── Main step ─────────────────────────────────────────────────────────────
 
     def step(self):
+        """
+        Advance the simulation by one step.
+ 
+        Execution order within each step:
+          1. process_step_memories(prev_step) — convert the previous step's
+             event log into cognitive memories before agents act this step.
+          2. schedule.step() — all agents execute their step() in random order.
+          3. update_citizen_grievance_levels() — recompute grievance tertiles
+             based on updated grievance values after schedule execution.
+          4. Time-series arrays updated (citizenPlot, protestingCitizen, etc.)
+             using idx = current_step - 1 as the array index.
+          5. Max metrics updated (Max_InProtestPct, Max_ActualInProtestPct,
+             Max_NVCitizens) — running maximums across the full run.
+          6. check_victory_condition() — evaluate terminal conditions.
+          7. datacollector.collect() — snapshot model-level reporters.
+          8. _update_cascade_tracker() — record new pillar defection events
+             in _pillar_registry and _first_defection_step.
+          9. log_model_state() — write full model state summary to the log,
+             including legitimacy, agent counts, victory code, and grievance
+             distribution.
+         10. Set self.running = False if MaxSteps is reached or victory != 0,
+             signalling Mesa to stop the run.
+        """
         prev_step = self.schedule.steps - 1
         strategy  = self.const["pillarproxstrat"]
         radius    = (
@@ -625,7 +1034,29 @@ class NVResistanceModel(mesa.Model):
     # ── Outcome helpers ───────────────────────────────────────────────────────
 
     def get_cascade_summary(self) -> Dict:
-        """Summary dict for batch output — cascade order and final counts."""
+        """
+        Return cascade timeline and final defection counts for batch output.
+ 
+        Reads from _first_defection_step (populated per institution type during
+        the run) and _pillar_registry (populated per agent) to reconstruct the
+        full defection history without additional log parsing.
+ 
+        Returns
+        -------
+        dict
+            Three keys:
+ 
+            "first_defection_steps" : Dict[str, int]
+                Institution type → step of first defection. Only institution
+                types that defected at least once appear here.
+ 
+            "never_defected" : List[str]
+                Institution types with no defections during the run.
+ 
+            "final_defection_by_type" : Dict[str, int]
+                Institution type → count of defected instances at end of run.
+                All UNIQUE_PILLAR_TYPES are present; 0 for non-defected types.
+        """
         return {
             "first_defection_steps": {
                 inst: step
@@ -646,6 +1077,15 @@ class NVResistanceModel(mesa.Model):
         }
 
     def get_final_victory_status(self):
+        """
+        Return a human-readable string describing the run outcome.
+ 
+        Returns
+        -------
+        str
+            "resistance" — resistance won (victory == 2).
+            "regime"     — regime won or draw (victory == 1 or 3).
+        """
         return "resistance" if self.victory == 2 else "regime"
 
     def close(self):
