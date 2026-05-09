@@ -21,7 +21,7 @@ OBSERVABLE PRESSURE REPLACES INTERNAL THRESHOLD LABEL
   This directly tests Chenoweth's Strategy 2 through an honest mechanism.
 
 DERIVE_STRATEGY (post-processing, not LLM output)
-  derive_strategy(target_group, institution, call_to_action) → strategy label.
+  derive_strategy(target_group, institution, non_violent_action_method) → strategy label.
   Computed deterministically from logged fields.  Never sent to or from LLM.
   Six categories: solidarity_building, citizen_mobilisation,
   security_force_conversion, economic_disruption, regime_delegitimisation,
@@ -79,65 +79,87 @@ def make_serializable(obj):
 def derive_strategy(
     target_group: str,
     institution: str,
-    call_to_action: str,
+    non_violent_action_method: str,
 ) -> str:
     """
     Derive a strategic orientation label from three already-logged fields.
 
     Parameters
     ----------
-    target_group   : "citizens" | "pillars" | "police" | "activists"
-    institution    : institution type string (e.g. "Trade Unions") or "N/A"
-    call_to_action : CallToActionType string (e.g. "boycott")
+    target_group              : "citizens" | "pillars" | "police" | "activists"
+    institution               : UNIQUE_PILLAR_TYPES string or "N/A"
+    non_violent_action_method : "protest_and_persuasion" | "non-cooperation" | "intervention"
+
+    Pillar → bucket mapping:
+    ┌───────────────────────────────────┬──────────────────┐
+    │ Business Community                │ ECONOMIC         │
+    │ Civil Service                     │ ECONOMIC         │
+    ├───────────────────────────────────┼──────────────────┤
+    │ Judiciary Institution             │ LEGAL            │
+    │ Legislative Institution           │ LEGAL            │
+    ├───────────────────────────────────┼──────────────────┤
+    │ Religious Institution             │ MORAL            │
+    ├───────────────────────────────────┼──────────────────┤
+    │ Educational System                │ LOCAL            │
+    │ Local Government                  │ LOCAL            │
+    │ State-Supported Media             │ LOCAL            │
+    └───────────────────────────────────┴──────────────────┘
+
+    Method × bucket → strategy:
+      protest_and_persuasion  × LEGAL  → regime_delegitimisation
+      protest_and_persuasion  × MORAL  → moral_witness
+      non-cooperation         × ECONOMIC → economic_disruption
+      non-cooperation         × LEGAL  → regime_delegitimisation
+      intervention            × MORAL  → moral_witness
+      intervention            × LOCAL  → physical_solidarity
+      anything else           × pillars → pillar_persuasion
 
     Returns
     -------
-    One of:
-      solidarity_building       — activist → activist network formation
-      citizen_mobilisation      — activist → citizens
-      security_force_conversion — activist → police (CANVAS: 'appeal to humanity')
-      economic_disruption       — boycott/strike → economic institutions
-      regime_delegitimisation   — petition/civil_disobedience → legal/political pillars
-      moral_witness             — vigil/hunger_strike/symbolic → moral/info pillars
-      pillar_persuasion         — general presence near pillar (catch-all)
+      solidarity_building        — activist → activist network
+      citizen_mobilisation       — activist → citizens
+      security_force_conversion  — activist → police
+      economic_disruption        — non-cooperation → economic pillars
+      regime_delegitimisation    — protest_and_persuasion | non-cooperation → legal pillars
+      moral_witness              — protest_and_persuasion | intervention → moral pillars
+      physical_solidarity        — intervention → local/media/educational pillars
+      pillar_persuasion          — catch-all
     """
+
+    # ── Non-pillar targets ────────────────────────────────────────────────────
     if target_group == "activists":
         return "solidarity_building"
     if target_group == "citizens":
         return "citizen_mobilisation"
     if target_group == "police":
         return "security_force_conversion"
+
+    # ── Pillar targets ────────────────────────────────────────────────────────
     if target_group == "pillars":
 
-        # Economic noncooperation
-        ECONOMIC_TACTICS = {"boycott", "strike"}
-        ECONOMIC_PILLARS = {"Business Community", "Trade Unions", "Civil Service"}
+        ECONOMIC_PILLARS = {"Business Community", "Civil Service"}
+        LEGAL_PILLARS    = {"Judiciary Institution", "Legislative Institution"}
+        MORAL_PILLARS    = {"Religious Institution"}
+        LOCAL_PILLARS    = {"Educational System", "Local Government", "State-Supported Media"}
 
-        # Legal/political pressure
-        LEGAL_TACTICS    = {"petition", "civil_disobedience"}
-        LEGAL_PILLARS    = {"Parliament", "Supreme Court"}
+        if non_violent_action_method == "protest_and_persuasion":
+            if institution in LEGAL_PILLARS:  return "regime_delegitimisation"
+            if institution in MORAL_PILLARS:  return "moral_witness"
+            return "pillar_persuasion"
 
-        # Moral witness
-        MORAL_TACTICS    = {"hunger_strike"}
-        MORAL_PILLARS    = {"Religious Institutions", "Professional Associations"}
+        if non_violent_action_method == "non-cooperation":
+            if institution in ECONOMIC_PILLARS: return "economic_disruption"
+            if institution in LEGAL_PILLARS:    return "regime_delegitimisation"
+            return "pillar_persuasion"
 
-        # Physical presence/visibility
-        PHYSICAL_TACTICS = {"sit_in", "march"}
-        PHYSICAL_PILLARS = {"Educational System", "Local Government",
-                            "Independent Media", "State Media"}
+        if non_violent_action_method == "intervention":
+            if institution in MORAL_PILLARS:  return "moral_witness"
+            if institution in LOCAL_PILLARS:  return "physical_solidarity"
+            return "pillar_persuasion"
 
-        if call_to_action in ECONOMIC_TACTICS and institution in ECONOMIC_PILLARS:
-            return "economic_disruption"
-        if call_to_action in LEGAL_TACTICS and institution in LEGAL_PILLARS:
-            return "regime_delegitimisation"
-        if call_to_action in MORAL_TACTICS and institution in MORAL_PILLARS:
-            return "moral_witness"
-        if call_to_action in PHYSICAL_TACTICS and institution in PHYSICAL_PILLARS:
-            return "physical_solidarity"
         return "pillar_persuasion"
 
     return "unknown"
-
 
 # ── NVBaseAgent ───────────────────────────────────────────────────────────────
 
@@ -565,7 +587,7 @@ class ActivistAgent(NVBaseAgent):
             target_agent           = "Unknown"
             target_pillar_inst     = "N/A"
             primary_attribute      = "Unknown"
-            call_to_action         = "march"
+            non_violent_action_method = "protest"
             elapsed: float         = 0.0
             activist_response      = None
             response_tokens = "N/A"
@@ -603,7 +625,7 @@ class ActivistAgent(NVBaseAgent):
                 chosen                 = d.chosen_position
                 target_agent           = d.target_agent_group
                 primary_attribute    = d.primary_attribute or "Unknown"
-                call_to_action    = getattr(d, "call_to_action_type", "march") or "march"
+                non_violent_action_method    = getattr(d, "non_violent_action_method", "march") or "march"
                 target_pillar_inst     = getattr(d, "target_pillar_institution", "N/A")
                 response_tokens = getattr(activist_response, "_response_tokens", 0) or "N/A"
             else:
@@ -615,7 +637,7 @@ class ActivistAgent(NVBaseAgent):
             derived_strategy = derive_strategy(
                 target_group=target_agent,
                 institution=target_pillar_inst,
-                call_to_action=call_to_action,
+                non_violent_action_method=non_violent_action_method,
             )
 
             context_serializable = make_serializable(
@@ -640,7 +662,7 @@ class ActivistAgent(NVBaseAgent):
                 target_agent=target_agent,
                 target_pillar_inst=target_pillar_inst,
                 primary_attribute=primary_attribute,
-                call_to_action=call_to_action,
+                non_violent_action_method=non_violent_action_method,
                 memory=activist_memory,
                 llm_response=response_serializable,
                 context={
@@ -653,7 +675,7 @@ class ActivistAgent(NVBaseAgent):
                     "target_pillar_institution":   target_pillar_inst,
                     "nearby_pillar_institutions":  nearby_pillar_institutions,
                     # Tactic
-                    "call_to_action_type":         call_to_action,
+                    "non_violent_action_method":         non_violent_action_method,
                     # Derived strategy (post-processing, logged here for convenience)
                     "derived_strategy":            derived_strategy,
                 },
