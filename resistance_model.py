@@ -457,6 +457,7 @@ class NVResistanceModel(mesa.Model):
         self,
         pillar_weights: Dict[str, float],
         n_total_agents: int,
+        random_seed = 42
     ) -> List[str]:
         
         """
