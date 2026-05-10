@@ -186,9 +186,11 @@ class SimLogger:
         target_agent: str           = "None",
         target_pillar_inst: str     = "None",
         primary_attribute: str       = "None",
-        call_to_action : str         = "None",
+        non_violent_action_method : str         = "None",
         response_tokens: str         = "None",
         elapsed: str    = "None",
+        situational_read: str = "None",
+        llm_response = "None",
         memory: str = "None",
     ) -> None:
         """
@@ -213,11 +215,14 @@ class SimLogger:
             f"target_agent=\"{target_agent}\"",
             f"target_pillar_inst=\"{target_pillar_inst}\"",
             f"primary_attribute=\"{primary_attribute}\"",
+            f"non_violent_action_method=\"{non_violent_action_method}\"",
         ]
-        if call_to_action:
-            parts.append(f"citizen_cta=\"{call_to_action}\"")
+        if situational_read:
+            parts.append(f"situational_read=\"{situational_read}\"")
         if memory:
             parts.append(f"memory=\"{memory}\"")
+        if llm_response:
+            parts.append(f"llm_response=\"{llm_response}\"")
         if context:
             parts.append(f"context={_json_field(context or {})}")
 

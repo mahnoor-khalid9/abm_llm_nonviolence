@@ -28,12 +28,12 @@ class LogConfig:
     base_dir     : Root directory for all log output.
     """
 
-    provider:    str = "gemini_flash"
-    version:     int = 2
+    provider:    str = "gemini"
+    version:     int = 3
     memory:      str = "stateful"
     prompt_type: str = "ZeroShot"
     vision:      str = "vision-4"
-    base_dir:    str = "SimulationLogs"
+    base_dir:    str = "SimulationLogs/"
 
     # ── Derived paths (computed once at construction) ─────────────────────────
 
