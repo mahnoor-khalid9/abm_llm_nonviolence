@@ -435,6 +435,22 @@ class NVResistanceModel(mesa.Model):
             self.logger.log_model_init(
                 f"PILLAR_TYPE_COUNTS: {json.dumps(type_counts)}"
             )
+            # ── Pillar defection ranking (logging only) ───────────────────
+            from collections import defaultdict
+            thresholds_by_type = defaultdict(list)
+            for entry in pillar_registry:
+                thresholds_by_type[entry["institution"]].append(entry["threshold"])
+
+            ranked = sorted(
+                thresholds_by_type.items(),
+                key=lambda x: sum(x[1]) / len(x[1])
+            )
+
+            rank_lines = ["PILLAR_DEFECTION_RANKING (easiest to hardest)"]
+            for rank, (inst, _) in enumerate(ranked, 1):
+                rank_lines.append(f"  {rank}. {inst}")
+            self.logger.log_model_init("\n".join(rank_lines))
+
 
         # ── Post-placement ────────────────────────────────────────────────────
         self.activist_empty_spaces = {}
