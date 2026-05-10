@@ -215,7 +215,7 @@ def _narrate_activist_movement(obs: Dict) -> str:
         if n == 1:
             parts.append("A fellow activist nearby. Coordination possible.")
         else:
-            parts.append(f"{n} activists converged nearby. We amplify each other.")
+            parts.append(f"{n} activists are active nearby. We amplify each other.")
 
     if killed:
         n = len(killed)
