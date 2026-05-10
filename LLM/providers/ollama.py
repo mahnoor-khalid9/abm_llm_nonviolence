@@ -17,7 +17,7 @@ class OllamaProvider(BaseProvider):
     Uses /api/chat with structured JSON output (Ollama format: field).
     """
 
-    DEFAULT_MODEL = "llama3.1:8b"
+    DEFAULT_MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct"
     DEFAULT_BASE_URL = "http://localhost:11434"
 
     def __init__(

@@ -8,17 +8,24 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import json
+
+if __package__ is None and __name__ == "__main__":
+    ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if ROOT not in sys.path:
+        sys.path.insert(0, ROOT)
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Type, Union
-
 from jinja2 import Template
 
-from LLM.schemas import ( 
+from LLM.schemas import (
     GandhianMovementOutputZeroShot,
-    GandhianMovementOutputCoT
+    GandhianMovementOutputCoT,
+    LLMResponse
 )
+
 
 
 class BaseProvider(ABC):
@@ -138,7 +145,7 @@ class BaseProvider(ABC):
             for pos in d.get("can_move_to", [])
         ]
 
-    def parse_decision_xml(self, xml_str: str) -> dict:
+    def zershot_parse_decision_xml(self, xml_str: str) -> dict:
         """
         Parse the <decision> XML output from the LLM into a JSON-compatible dict.
         Handles malformed whitespace, missing tags, and list fields like chosen_position.
@@ -168,13 +175,17 @@ class BaseProvider(ABC):
 
     def xml_to_json(self, xml_str: str) -> str:
         """Return compact JSON string from decision XML."""
-        return json.dumps(self.parse_decision_xml(xml_str))
-
+        if self.prompt_type == "ZeroShot":
+            return json.dumps(self.zershot_parse_decision_xml(xml_str))
+        else:
+            pass
+    
     def ask_activist_position(
         self,
         activist_local_context: dict,
         activist_memory: Optional[dict] = None,
         use_memory: bool = True,
+        previous_error: Optional[str] = None,
     ) -> Union[GandhianMovementOutputZeroShot, GandhianMovementOutputCoT]:
         """
         Build the prompt, call the model, validate the position, return output.
@@ -192,31 +203,49 @@ class BaseProvider(ABC):
             use_memory=use_memory,
         )
 
-        last_error: Optional[str] = None
         current_prompt = user_prompt
+        # error related to incorrect response generated
+        if previous_error is not None:
+            current_prompt = self.append_error_feedback(
+                base_prompt=user_prompt,
+                error_message=previous_error,
+            )
 
+        last_error = None
         for attempt in range(3):
-            # On retry, append the previous error to the prompt
+
             if last_error is not None:
-                current_prompt = self.append_error_feedback(
-                    base_prompt=user_prompt,
-                    error_message=last_error,
-                )
+                combined = "\n".join(filter(None, [previous_error, last_error]))
+                current_prompt = self.append_error_feedback(user_prompt, combined)
 
             try:
-                raw = self._call_api(prompt=current_prompt, response_model=response_model)
-                # Try direct JSON parse first
+                llm_response = self._call_api(
+                    prompt=current_prompt,
+                    response_model=response_model,
+                )
+                
+                # print(llm_response.content, llm_response.thinking)
+                
+                # Guard: wrap plain-string responses from non-vLLM providers
+                if not isinstance(llm_response, LLMResponse):
+                    llm_response = LLMResponse(thinking=None, content=llm_response)
+
                 try:
-                    agent_output = response_model.model_validate_json(raw)
+                    agent_output = response_model.model_validate_json(
+                        llm_response.content
+                    )
                 except Exception as parse_err:
-                    # Fallback: try XML-to-JSON conversion
                     try:
-                        agent_output = response_model.model_validate_json(self.xml_to_json(raw))
+                        agent_output = response_model.model_validate_json(
+                            self.xml_to_json(llm_response.content)
+                        )
                     except Exception:
-                        # Both failed — raise original parse error so retry sees it
                         raise parse_err
 
+                # ── Attach metadata ───────────────────────────────────────────
                 agent_output._response_tokens = self._last_token_count
+                agent_output._reasoning        = llm_response.thinking  
+
                 return agent_output
 
             except Exception as exc:

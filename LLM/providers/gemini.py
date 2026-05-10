@@ -16,8 +16,10 @@ class GeminiProvider(BaseProvider):
     Supports structured JSON output via response_json_schema.
     """
 
-    DEFAULT_MODEL = "gemini-2.5-flash"
+    DEFAULT_MODEL = "gemini-3.1-flash-lite"
     CANDIDATE_MODELS = [
+        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite",
         "gemini-3-flash-preview",
         "gemini-2.0-flash-exp",
         "gemini-2.5-pro",
@@ -26,6 +28,7 @@ class GeminiProvider(BaseProvider):
     def __init__(
         self,
         prompt_dir: str = "./Prompts",
+        prompt_type: str = "ZeroShot",
         model: str | None = None,
         temperature: float = 0.0,
         thinking_budget: int = -1,   # -1 = enabled (2.5 Pro), 0 = disabled
@@ -38,8 +41,8 @@ class GeminiProvider(BaseProvider):
         self.active_model    = model or self.DEFAULT_MODEL
         self.temperature     = temperature
         self.thinking_budget = thinking_budget
-
-        self._load_prompts(prompt_dir)
+        self.prompt_type     = prompt_type
+        self._load_prompts()
 
     # ── BaseProvider contract ────────────────────────────────────────────────
 

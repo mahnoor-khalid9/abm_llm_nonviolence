@@ -3,11 +3,22 @@ raw_memory.py — Structured event-log parser for the Gandhian activist simulati
 
 Key responsibilities
 --------------------
-- Parse the shared step log into per-activist memory dicts.
-- Respect toroidal distance when deciding which events fall within an activist's
-  vision radius.
+- Parse the shared step log (written by SimLogger.log_agent_event) into
+  per-activist memory dicts.
+- Respect toroidal distance when deciding which events fall within an
+  activist's vision radius.
 - Categorise every observed event into one of four neighbourhood observation
   buckets: police_actions, pillar_changes, other_activists, citizen_activity.
+
+Field consistency with simulation_logger.py
+-------------------------------------------
+- _parse_fields strips surrounding double-quotes from values so downstream
+  code receives clean strings (e.g. 'citizens' not '"citizens"').
+- The context JSON may contain [SC] in place of literal semicolons (escaped
+  by the logger to protect the semicolon-delimited log format).
+  _safe_parse_context reverses this before JSON parsing.
+- Deduplication key includes target_id for police events so multiple arrests
+  by the same officer in one step are preserved.
 
 Fixes vs. original
 ------------------
@@ -18,7 +29,7 @@ Fixes vs. original
 - "kill" and "recruiting_phase" events are handled in own_actions.
 - Citizen "kill" events are routed to citizen_activity (not silently dropped).
 - Pillar "wavering" events get their own sub-bucket.
-- Duplicate log lines are deduplicated (step, agent_id, event) before processing.
+- Duplicate log lines are deduplicated before processing.
 - target_pos parsing uses the shared parse_pos() utility (no hand-rolled splits).
 - Empty lists in own_actions are also removed at cleanup, not just neighbourhood.
 - Notable absences are flagged so the NLP layer can narrate them.
@@ -38,18 +49,19 @@ import numpy as np
 GRID_WIDTH:  int = 40
 GRID_HEIGHT: int = 40
 
-# All event types the simulation can produce — used to detect unseen event types
-# in the log so we don't silently discard unknown future events.
+# All event types the simulation can produce.
+# Cross-referenced with agent_based.py (see event_inventory.md).
+# Used to detect unseen event types so we don't silently discard future events.
 
 KNOWN_EVENTS: Set[str] = {
-    # Activist events
+    # Activist events (ActivistAgent)
     "movement_decision", "protest_start", "active_nonviolent", "jail", "kill",
-    # Police events
-    "patrol", "arrest_attempt", "jail", "kill", "defect",
-    # Pillar events
-    "loyal", "wavering", "defect",
-    # Citizen events
-    "suffering", "unbothered", "protest_start", "active_nonviolent", "rest_phase", "jail", "kill",
+    # Police events (PoliceAgent)
+    "jail", "kill", "defect",
+    # Pillar events (PillarAgent)
+    "defect",
+    # Citizen events (CitizenAgent)
+    "active_nv", "protest_start", "rest_phase", "jail", "kill",
 }
 
 
@@ -108,7 +120,9 @@ def parse_step_log(step_file: str) -> List[Dict[str, Any]]:
     Parse every event line in *step_file*.
 
     Returns a list of event dicts sorted by step.
-    Duplicate lines (same step + agent_id + event) are deduplicated.
+    Duplicate lines are deduplicated using (step, agent_id, event, target_id)
+    so that multiple police actions against different targets in one step are
+    each preserved.
     Events whose position cannot be parsed are kept (pos=None) so callers
     can decide whether to skip them.
     """
@@ -123,13 +137,16 @@ def parse_step_log(step_file: str) -> List[Dict[str, Any]]:
                 agent_id = int(fields.get("agent_id", 0))
                 event    = fields.get("event", "")
 
-                dedup_key = (step, agent_id, event)
+                raw_context = fields.get("context", "{}")
+                context = _safe_parse_context(raw_context)
+
+                # Dedup key includes target_id so multiple police actions
+                # against different targets in the same step are preserved.
+                target_id = str(context.get("target_id", ""))
+                dedup_key = (step, agent_id, event, target_id)
                 if dedup_key in seen:
                     continue
                 seen.add(dedup_key)
-
-                raw_context = fields.get("context", "{}")
-                context = _safe_parse_context(raw_context)
 
                 event_dict: Dict[str, Any] = {
                     "step":                step,
@@ -138,16 +155,13 @@ def parse_step_log(step_file: str) -> List[Dict[str, Any]]:
                     "pos":                 parse_pos(fields.get("pos", "")),
                     "event":               event,
                     "target_agent":        fields.get("target_agent", "None"),
-                    "strategy":            fields.get("strategy", "None"),
-                    "embodied_attributes": fields.get("embodied_attributes", "None"),
                     "context":             context,
-                    # New fields added to movement_decision log
+                    # Movement-decision fields (present only for ActivistAgent)
                     "elapsed":             fields.get("elapsed", "None"),
                     "response_tokens":     fields.get("response_tokens", "None"),
                     "target_pillar_inst":  fields.get("target_pillar_inst", "None"),
                     "primary_attribute":   fields.get("primary_attribute", "None"),
-                    "call_to_action":      fields.get("call_to_action", "None"),
-                    "memory":              fields.get("memory", "None"),
+                    "non_violent_action_method": fields.get("non_violent_action_method", "None"),
                 }
 
                 # Warn about event types we don't recognise
@@ -307,22 +321,17 @@ def _record_own_action(mem: Dict, ev: Dict) -> None:
             "step":              ev["step"],
             "position":          ev["pos"],
             "event":             action,
-            # Core decision fields
+            # Core decision fields (from top-level log fields)
             "target":            ev["target_agent"],
             "target_pillar_inst": ev.get("target_pillar_inst", "None"),
             "primary_attribute": ev.get("primary_attribute", "None"),
-            "call_to_action":    ev.get("call_to_action", "None"),
-            # Strategy (from context if not top-level)
-            "strategy":          ev["strategy"],
-            "derived_strategy":  ev["context"].get("derived_strategy", "None"),
-            # Coordination (from context)
-            "coordination_state":          ev["context"].get("coordination_state", "None"),
+            "non_violent_action_method": ev.get("non_violent_action_method", "None"),
+            # Strategy and coordination (from context dict)
+            "derived_strategy":           ev["context"].get("derived_strategy", "None"),
+            "coordination_state":         ev["context"].get("coordination_state", "None"),
             "free_activists_nearby_count": ev["context"].get("free_activists_nearby_count", 0),
-            "nearby_activist_ctas":        ev["context"].get("nearby_activist_ctas", []),
             # Pillar context (observable)
-            "nearby_pillar_summary":       ev["context"].get("nearby_pillar_summary", {}),
-            # Pillar internals (researcher only)
-            "pillar_internal_log":         ev["context"].get("pillar_internal_log", []),
+            "nearby_pillar_institutions": ev["context"].get("nearby_pillar_institutions", {}),
             # Computational metrics
             "elapsed":           ev.get("elapsed", "None"),
             "response_tokens":   ev.get("response_tokens", "None"),
@@ -394,10 +403,9 @@ def _record_neighbourhood_event(mem: Dict, ev: Dict) -> None:
     elif event_type == "ActivistAgent":
         entry = dict(base_entry)
         if event_action == "movement_decision":
+            # Drop full context (large) — only keep lightweight fields
             entry.pop("context", None)
-            entry["target"]     = ev["target_agent"]
-            entry["strategy"]   = ev["strategy"]
-            entry["attributes"] = ev["embodied_attributes"]
+            entry["target"] = ev["target_agent"]
         mem["neighborhood_observations"]["other_activists"].append(entry)
 
     elif event_type == "CitizenAgent":
@@ -408,12 +416,17 @@ def _record_neighbourhood_event(mem: Dict, ev: Dict) -> None:
 # ── Utility helpers ───────────────────────────────────────────────────────────
 
 def _parse_fields(line: str) -> Dict[str, str]:
-    """Split a semicolon-delimited key=value log line into a dict."""
+    """
+    Split a semicolon-delimited key=value log line into a dict.
+
+    Values are stripped of surrounding double-quotes that the logger adds
+    to string fields (e.g. target_agent="citizens" → citizens).
+    """
     fields: Dict[str, str] = {}
     for part in line.strip().split(";"):
         if "=" in part:
             k, _, v = part.partition("=")
-            fields[k.strip()] = v.strip()
+            fields[k.strip()] = v.strip().strip('"')
     return fields
 
 
@@ -421,14 +434,17 @@ def _safe_parse_context(raw: Any) -> Dict[str, Any]:
     """
     Return a dict from whatever the context field contains:
     - already a dict  → return as-is
-    - JSON string     → parse it
+    - JSON string     → reverse [SC] escape from logger, then parse
     - anything else   → return {}
     """
     if isinstance(raw, dict):
         return raw
     if isinstance(raw, str):
         try:
-            parsed = json.loads(raw)
+            # Logger escapes semicolons as [SC] to protect the log format;
+            # restore them before JSON parsing.
+            restored = raw.replace("[SC]", ";")
+            parsed = json.loads(restored)
             return parsed if isinstance(parsed, dict) else {}
         except (json.JSONDecodeError, ValueError):
             return {}

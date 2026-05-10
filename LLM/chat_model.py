@@ -10,14 +10,23 @@ output   = provider.ask_activist_position(context, memory, use_memory=True)
 """
 
 from __future__ import annotations
+
+import os
+import sys
+
+if __package__ is None and __name__ == "__main__":
+    ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if ROOT not in sys.path:
+        sys.path.insert(0, ROOT)
+
 from typing import Any, Optional
 from LLM.base import BaseProvider
-from LLM.schemas import GandhianMovementOutputZeroShot
-
+from LLM.schemas import GandhianMovementOutputZeroShot, GandhianMovementOutputCoT, LLMResponse
 
 def build_provider(
     provider: str,
     prompt_dir: str = "./Prompts",
+    prompt_type: str = "ZeroShot",
     use_memory: bool = True,
     **kwargs: Any,
 ) -> BaseProvider:
@@ -40,7 +49,7 @@ def build_provider(
 
     if provider == "gemini":
         from LLM.providers.gemini import GeminiProvider
-        instance = GeminiProvider(prompt_dir=prompt_dir, **kwargs)
+        instance = GeminiProvider(prompt_dir=prompt_dir, prompt_type=prompt_type, **kwargs)
 
     elif provider == "openai":
         from LLM.providers.openai_provider import OpenAIProvider
@@ -57,13 +66,13 @@ def build_provider(
     # LLM/chat_model.py — add to build_provider()
     elif provider == "vllm":
         from LLM.providers.vllm_provider import VLLMProvider
-        instance = VLLMProvider(prompt_dir=prompt_dir, **kwargs)
+        instance = VLLMProvider(prompt_dir=prompt_dir, prompt_type=prompt_type, **kwargs)
 
 
     else:
         raise ValueError(
             f"Unknown provider '{provider}'. "
-            "Choose from: gemini, openai, ollama, huggingface"
+            "Choose from: gemini, openai, ollama, huggingface, vllm"
         )
 
     # Attach use_memory so callers can read it back if needed
@@ -85,25 +94,30 @@ class ChatModel:
         provider: str = "gemini",
         use_memory: bool = True,
         prompt_dir: str = "./Prompts",
+        prompt_type: str = "ZeroShot",
         **kwargs: Any,
     ):
         self.use_memory = use_memory
         self._provider  = build_provider(
             provider=provider,
             prompt_dir=prompt_dir,
+            prompt_type=prompt_type,
             use_memory=use_memory,
             **kwargs,
         )
+
 
     def ask_activist_position(
         self,
         activist_local_context: dict,
         activist_memory: Optional[dict] = None,
+        previous_error: Optional[str] = None,
     ):
         return self._provider.ask_activist_position(
             activist_local_context=activist_local_context,
             activist_memory=activist_memory,
             use_memory=self.use_memory,
+            previous_error=previous_error,
         )
 
     def fill_self_reflection_prompt(self, agent_output, activist_local_context: dict) -> str:

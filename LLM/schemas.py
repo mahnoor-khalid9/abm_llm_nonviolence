@@ -57,21 +57,20 @@ If NPillar != 24, resistance_model clips to min(NPillar, 24) and logs a warning.
 """
 
 from __future__ import annotations
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+from typing import List, Literal, Optional, Any, Union, Dict
+import json
 
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Literal, Optional
 
+import re
+from dataclasses import dataclass
+
+@dataclass
+class LLMResponse:
+    thinking: str | None    # content inside <think>...</think>
+    content:  str     
 
 # ── Gandhian attribute vocabulary ─────────────────────────────────────────────
-
-GandhianAttribute_x = Literal[
-    "Nonviolence (Ahimsa)", "Truthfulness (Satyagraha)", "Simplicity",
-    "Self-Discipline", "Empathy", "Integrity", "Courage", "Resilience",
-    "Visionary Leadership", "Humility", "Compassion", "Patience",
-    "Self-Reliance", "Perseverance", "Forgiveness", "Charisma",
-    "Dedication", "Intellectual Curiosity", "Inclusiveness", "Sacrifice",
-]
-
 
 GandhianAttribute = Literal[
     "Nonviolence (Ahimsa)", "Truthfulness (Satyagraha)", "Empathy", 
@@ -86,16 +85,13 @@ GandhianAttribute = Literal[
 
 UNIQUE_PILLAR_TYPES: List[str] = [
     "Educational System",
-    "Trade Unions",
-    "Religious Institutions",
-    "Professional Associations",
-    "Independent Media",
+    "Religious Institution",
     "Business Community",
     "Civil Service",
     "Local Government",
-    "Parliament",
-    "Supreme Court",
-    "State Media",
+    "Judiciary Institution",             
+    "Legislative Institution",          
+    "State-Supported Media",   
 ]
 
 # ── PILLAR_ASSIGNMENT_LIST — flat 24-element ordered list ─────────────────────
@@ -107,36 +103,18 @@ UNIQUE_PILLAR_TYPES: List[str] = [
 #
 # DO NOT reorder.  The causal claim is in the ordering.
 
+PILLAR_TYPE_WEIGHTS: Dict[str, float] = {  # Changed to float for flexibility
+    "Educational System": 1.0,     
+    "Religious Institution": 1.0, 
+    "Business Community": 1.0,     
+    "Civil Service": 1.0,          
+    "Local Government": 1.0,       
+    "Judiciary Institution": 1.0,             
+    "Legislative Institution": 1.0,          
+    "State-Supported Media": 1.0,            
+}
 
-PILLAR_ASSIGNMENT_LIST: List[str] = [
-    "Educational System",       # rank  1
-    "Educational System",       # rank  2
-    "Educational System",       # rank  3
-    "Trade Unions",             # rank  4
-    "Trade Unions",             # rank  5
-    "Trade Unions",             # rank  6
-    "Trade Unions",             # rank  7
-    "Religious Institutions",   # rank  8
-    "Religious Institutions",   # rank  9
-    "Religious Institutions",   # rank 10
-    "Professional Associations",# rank 11
-    "Professional Associations",# rank 12
-    "Independent Media",        # rank 13
-    "Independent Media",        # rank 14
-    "Business Community",       # rank 15
-    "Business Community",       # rank 16
-    "Business Community",       # rank 17
-    "Civil Service",            # rank 18
-    "Civil Service",            # rank 19
-    "Local Government",         # rank 20
-    "Local Government",         # rank 21
-    "Parliament",               # rank 22
-    "Supreme Court",            # rank 23
-    "State Media",              # rank 24
-]
-
-assert len(PILLAR_ASSIGNMENT_LIST) == 24, "PILLAR_ASSIGNMENT_LIST must have exactly 24 entries"
-
+assert len(PILLAR_TYPE_WEIGHTS) == 8, "PILLAR_TYPE_WEIGHTS must have exactly 8 pillar types"
 
 # ── Target institution vocabulary ─────────────────────────────────────────────
 #
@@ -145,19 +123,15 @@ assert len(PILLAR_ASSIGNMENT_LIST) == 24, "PILLAR_ASSIGNMENT_LIST must have exac
 
 TargetInstitution = Literal[
     "Educational System",
-    "Trade Unions",
-    "Religious Institutions",
-    "Professional Associations",
-    "Independent Media",
+    "Religious Institution",
     "Business Community",
     "Civil Service",
     "Local Government",
-    "Parliament",
-    "Supreme Court",
-    "State Media",
+    "Judiciary Institution",             
+    "Legislative Institution",          
+    "State-Supported Media",  
     "N/A",
 ]
-
 
 # ── Call-to-action vocabulary ─────────────────────────────────────────────────
 CallToActionType = Literal[
@@ -170,6 +144,11 @@ CallToActionType = Literal[
     "hunger_strike",
 ]
 
+NonViolentActionMethod = Literal[ 
+    "protest_and_persuasion", 
+    "non-cooperation", 
+    "intervention" 
+]
 
 # ── Embodied attributes ───────────────────────────────────────────────────────
 class EmbodiedAttributes(BaseModel):
@@ -237,55 +216,14 @@ class CoTReasoning(BaseModel):
     )
 
 
-class GandhianDecision(BaseModel):
-    chosen_position: List[int] = Field(
-        description="The selected grid position as [x, y]. Must exactly match step_6_commit."
-    )
-    target_agent_group: Literal["citizens", "pillars", "police", "activists"] = Field(
-        description="The primary target agent group of this movement action."
-    )
-    target_pillar_institution: TargetInstitution = Field(
-        description=(
-            "If target_agent_group is 'pillars', name the specific institution type: "
-            "'Universities & Students', 'Trade Unions', 'Religious Institutions', "
-            "'Professional Associations', 'Independent Media', 'Business Community', "
-            "'Civil Service', 'Local Government', 'Parliament', 'Supreme Court', "
-            "'Electoral Commission', 'State Television', or 'Central Bank'. "
-            "Write 'N/A' when targeting citizens, police, or activists."
-        )
-    )
-    strategy_name: str = Field(description="Short name for the non-violent strategy applied.")
-    embodied_attributes: EmbodiedAttributes
-    call_to_action_type: CallToActionType = Field(
-        description=(
-            "The specific nonviolent tactic: sit_in, march, boycott, strike, "
-            "civil_disobedience, petition, hunger_strike."
-        )
-    )
-    citizen_call_to_action: str = Field(
-        description=(
-            "A concise actionable appeal to citizens in the current neighborhood. "
-            "Must reference their observed state, name the call_to_action_type, "
-            "and invite a specific peaceful action. "
-            "If targeting a pillar, name the institution type explicitly."
-        )
-    )
-    explanation: str = Field(
-        description=(
-            "3-5 sentences referencing step_5_elimination directly. "
-            "Why this position over the eliminated one. "
-            "If targeting a pillar, explain why this institution type at this moment."
-        )
-    )
-
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  WITH MEMORY
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-# ── Memory ─────────────────────────────────────────────────────
+
+# ── Step 1: Memory ────────────────────────────────────────────
 
 LastInfluence = Literal[
     "none",
@@ -302,41 +240,136 @@ ChangeDetected = Literal[
     "mixed"
 ]
 
-# ── Situation ─────────────────────────────────────────────────
-
-Opportunity = Literal[
-    "suffering_citizens",
-    "activist_cluster",
-    "pillar",
-    "police"
-]
-
-RiskLevel = Literal[
-    "low",
-    "medium",
-    "high"
+Coordination = Literal[
+    "isolated",
+    "supported"
 ]
 
 
 class MemoryBlock(BaseModel):
-    last_influence: LastInfluence
-    change_detected: ChangeDetected
+    last_influence: Union[LastInfluence, str]
+    change_detected: Union[ChangeDetected, str]
+    coordination: Union[Coordination, str]
 
 
-class SituationBlock(BaseModel):
-    primary_opportunity: Opportunity
-    secondary_opportunity: Opportunity
-    risk_level: RiskLevel
+# ── Step 2: Survey ────────────────────────────────────────────
+class DirectionSurvey(BaseModel):
+    moves:     Optional[list[tuple[int, int]]] = None
+    suffering: int = 0
+    activists: int = 0
+    # Changed from PillarInfo to a simple list of strings
+    pillars:   Optional[list[str]] = None
+
+    @field_validator("suffering", "activists", mode="before")
+    @classmethod
+    def coerce_int(cls, v: Any) -> int:
+        if v is None or str(v).strip().lower() in ("", "null", "none"):
+            return 0
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return 0
+
+    @field_validator("moves", mode="before")
+    @classmethod
+    def coerce_moves(cls, v: Any) -> Optional[list[tuple[int, int]]]:
+        if not v or (isinstance(v, list) and len(v) == 0):
+            return None
+        # Handle if LLM returns tuples or mixed formats
+        result = []
+        for item in v:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                result.append((int(item[0]), int(item[1])))
+        return result if result else None
 
 
-class CoTReasoningMemory(BaseModel):
-    memory: MemoryBlock
-    situation: SituationBlock
-    
+    @field_validator("pillars", mode="before")
+    @classmethod
+    def coerce_pillars(cls, v: Any) -> Optional[list[str]]:
+        """
+        Extracts just the list of institution names.
+        Handles: 
+        1. Simple list: ["Trade Unions"]
+        2. String: '["Trade Unions"]' or "null"
+        3. Nested Dict: {"stable": {"institutions": ["Trade Unions"]}}
+        """
+        if not v:
+            return None
+
+        # Handle string input (JSON or null-strings)
+        if isinstance(v, str):
+            v_clean = v.strip().lower()
+            if v_clean in ("null", "none", ""):
+                return None
+            try:
+                v = json.loads(v)
+            except json.JSONDecodeError:
+                return None
+
+        # If it's the complex dictionary from your context, extract just the names
+        if isinstance(v, dict):
+            # Check for 'stable' key first
+            stable_data = v.get("stable")
+            if isinstance(stable_data, dict):
+                return stable_data.get("institutions", [])
+            # Fallback for other dict structures
+            return v.get("institutions") if "institutions" in v else None
+
+        # If it's already a list, return it
+        if isinstance(v, list):
+            return v if len(v) > 0 else None
+
+        return None
+
+class SurveyBlock(BaseModel):
+    north:     Optional[DirectionSurvey] = None
+    south:     Optional[DirectionSurvey] = None
+    east:      Optional[DirectionSurvey] = None
+    west:      Optional[DirectionSurvey] = None
+    adjacent:  Optional[DirectionSurvey] = None
+    northeast: Optional[DirectionSurvey] = None
+    northwest: Optional[DirectionSurvey] = None
+    southeast: Optional[DirectionSurvey] = None
+    southwest: Optional[DirectionSurvey] = None
+
+
+# ── Step 3: Position Resolution ───────────────────────────────
+
+TargetGroup = Literal[
+    "citizens",
+    "activists",
+    "pillars",
+    "police"
+]
+
+
+class PositionBlock(BaseModel):
+    best_move: tuple[int, int]
+    target_group: Union[TargetGroup, str]
+    pillar_required: bool
+
+    @field_validator("pillar_required", mode="before")
+    @classmethod
+    def coerce_bool(cls, v: Any) -> bool:
+        # "false" → False, "true" → True
+        if isinstance(v, str):
+            return v.strip().lower() == "true"
+        return bool(v)
+
+
+# ── Full Reasoning Chain ──────────────────────────────────────
+
+class CoTReasoning(BaseModel):
+    step_1_memory:   MemoryBlock
+    step_2_survey:   SurveyBlock
+    step_3_position: PositionBlock
+
+
+# ── Top-level Output ──────────────────────────────────────────
+
 class GandhianMovementOutputCoT(BaseModel):
-    reasoning: CoTReasoningMemory
-    decision: GandhianDecisionZeroShot
-
+    reasoning: CoTReasoning
+    decision:  GandhianDecisionZeroShot
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  WITHOUT MEMORY
@@ -395,7 +428,7 @@ class GandhianDecisionNoMemory(BaseModel):
     )
     strategy_name: str
     embodied_attributes: EmbodiedAttributes
-    call_to_action_type: CallToActionType = Field(
+    non_violent_action_method: NonViolentActionMethod = Field(
         description=(
             "The specific nonviolent tactic: sit_in, march, boycott, strike, "
             "civil_disobedience, petition, hunger_strike."
@@ -430,45 +463,115 @@ class GandhianDecisionZeroShot(BaseModel):
     target_agent_group: Literal["citizens", "pillars", "police", "activists"] = Field(
         description="The primary target agent group of this movement action."
     )
-    target_pillar_institution: TargetInstitution = Field(
+    target_pillar_institution: Union[TargetInstitution, str] = Field(
         description=(
             "If and only if, the target_agent_group is 'pillars', mention the target institution type, visible in your neighborhood."
-            "Write N/A otherwise."
+            "Write 'N/A' otherwise."
         )
     )
-    primary_attribute: GandhianAttribute = Field(
+    primary_attribute: Union[GandhianAttribute, str] = Field(
         description="The dominant Gandhian attribute driving this movement decision."
     )
 
-    call_to_action_type: CallToActionType = Field(
+    non_violent_action_method: Union[NonViolentActionMethod, str] = Field(
         description=(
-            "The specific nonviolent tactic: sit_in, march, boycott, strike, "
-            "civil_disobedience, petition, hunger_strike."
+            "The specific nonviolent method: protest_and_persuasion | non-cooperation | intervention."
         )
     )
 
-    @field_validator("call_to_action_type")
+
+    @field_validator("target_pillar_institution", mode="before")
     @classmethod
-    def validate_cta(cls, v: str) -> str:
+    def coerce_pillar_institution(cls, v: Any) -> str:
+        if v is None or str(v).strip().lower() in ("null", "none", "n/a", ""):
+            return "N/A"
+        return v
+    
+    @field_validator("non_violent_action_method")
+    @classmethod
+    def validate_method(cls, v: str) -> str:
         valid = {
-            "sit_in", "march", "boycott", "strike",
-            "civil_disobedience", "petition", "hunger_strike",
+            "protest_and_persuasion", 
+            "non-cooperation", 
+            "intervention" 
         }
         if v in valid:
             return v
         # Map close variants to valid values
         mapping = {
-            "symbolic_protest": "march",
-            "vigil":            "march",
-            "human_chain":      "sit_in",
-            "demonstration":    "march",
-            "protest":          "march",
+            "symbolic_protest": "protest_and_persuasion",
+            "vigil":            "protest_and_persuasion",
+            "human_chain":      "protest_and_persuasion",
+            "demonstration":    "protest_and_persuasion",
+            "protest":          "protest_and_persuasion",
         }
-        fallback = mapping.get(v, "march")
-        print(f"[schemas] call_to_action_type '{v}' not valid → mapped to '{fallback}'")
+        fallback = mapping.get(v, "protest_and_persuasion")
+        print(f"[schemas] non_violent_action_method '{v}' not valid → mapped to '{fallback}'")
         return fallback
+
+
     
-
 class GandhianMovementOutputZeroShot(BaseModel):
-    decision: GandhianDecisionZeroShot
+    model_config = ConfigDict(extra='allow')
+    # Modified for Gemini
+    decision: GandhianDecisionGeminiZeroShot
 
+
+class GandhianDecisionGeminiZeroShot(BaseModel):
+    chosen_position: List[int] = Field(
+        description="The selected grid position as [x, y]. Must appear in can_move_to."
+    )
+    target_agent_group: Literal["citizens", "pillars", "police", "activists"] = Field(
+        description="The primary target agent group of this movement action."
+    )
+    target_pillar_institution: Union[TargetInstitution, str] = Field(
+        description=(
+            "If and only if, the target_agent_group is 'pillars', mention the target institution type, visible in your neighborhood."
+            "Write 'N/A' otherwise."
+        )
+    )
+    primary_attribute: Union[GandhianAttribute, str] = Field(
+        description="The dominant Gandhian attribute driving this movement decision."
+    )
+
+    non_violent_action_method: Union[NonViolentActionMethod, str] = Field(
+        description=(
+            "The specific nonviolent method: protest_and_persuasion | non-cooperation | intervention."
+        )
+    )
+
+
+    @field_validator("target_pillar_institution", mode="before")
+    @classmethod
+    def coerce_pillar_institution(cls, v: Any) -> str:
+        if v is None or str(v).strip().lower() in ("null", "none", "n/a", ""):
+            return "N/A"
+        return v
+    
+    @field_validator("non_violent_action_method")
+    @classmethod
+    def validate_method(cls, v: str) -> str:
+        valid = {
+            "protest_and_persuasion", 
+            "non-cooperation", 
+            "intervention" 
+        }
+        if v in valid:
+            return v
+        # Map close variants to valid values
+        mapping = {
+            "symbolic_protest": "protest_and_persuasion",
+            "vigil":            "protest_and_persuasion",
+            "human_chain":      "protest_and_persuasion",
+            "demonstration":    "protest_and_persuasion",
+            "protest":          "protest_and_persuasion",
+        }
+        fallback = mapping.get(v, "protest_and_persuasion")
+        print(f"[schemas] non_violent_action_method '{v}' not valid → mapped to '{fallback}'")
+        return fallback
+
+
+
+    # situational_read: str = Field(
+    #     description="A summary of the current situational context that influenced this decision."
+    # )

@@ -1,44 +1,20 @@
 """
-nlp_memory.py — Memory generation for Gandhian activist agents.
+nlp_memory.py
 
-Changes from previous version
-------------------------------
-generate_neighborhood_memory → RECENT_EVENTS structured format
-  Previously produced a multi-paragraph prose narrative about the neighbourhood.
-  Now produces a compact structured string with exactly four event fields:
+Deterministic memory generation for Gandhian activist agents.
+Compact narratives using Chenowett/Gandhian vocabulary as LLM priming.
 
-    Police action  — kill or arrest of any agent nearby at T-1
-    Pillar events  — any pillar defection (with institution type)
-    Citizen changes — net new citizens who became nonviolently active
-    Activist movement — other activists visible in the zone
+generate_gandhian_memory       → {{SELF_REFLECTION}}
+generate_neighborhood_memory   → {{RECENT_EVENTS}}
 
-  This maps to {{RECENT_EVENTS}} in the prompt template.
-  Each field says "none" when nothing happened — consistent schema every step.
-
-  Rationale: the LLM already receives the current neighborhood state in the
-  context. What memory needs to convey is what *happened* at T-1 that caused
-  the current state. Four event fields cover all causally relevant changes:
-  - Police action: backfire mechanism, moral shock
-  - Pillar events: cascade signal — which institution type just defected
-  - Citizen changes: did the movement grow or shrink last step?
-  - Activist movement: is coordination forming or dissolving?
-
-generate_gandhian_memory — UNCHANGED
-  Produces the activist's own-action self-reflection narrative.
-  Maps to {{SELF_REFLECTION}} in the prompt template.
-  Still needed: the activist must know its own state (jailed, active, etc.).
+No em-dashes or colons in narrative output.
 """
 
 from __future__ import annotations
 
 import json
-import logging
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List
 
-from LLM.raw_memory import parse_pos
-
-
-# ── Context helper ────────────────────────────────────────────────────────────
 
 def _safe_ctx(raw: Any) -> Dict[str, Any]:
     if isinstance(raw, dict):
@@ -53,267 +29,312 @@ def _safe_ctx(raw: Any) -> Dict[str, Any]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  RECENT EVENTS — structured T-1 event summary (maps to {{RECENT_EVENTS}})
+#  RECENT EVENTS  →  {{RECENT_EVENTS}}
 # ══════════════════════════════════════════════════════════════════════════════
 
 def generate_neighborhood_memory(agent_id: int, memory_data: Dict) -> str:
-    """
-    Produce a structured T-1 event summary for the activist's {{RECENT_EVENTS}}
-    prompt variable.
-    """
     if not memory_data:
-        return "No memory available — first step or memory pipeline did not run."
+        return "First step. No prior memory."
 
-    obs_data = memory_data.get("neighborhood_observations", {})
-    agent_id = int(agent_id)
-
-    police_action     = _extract_police_action(obs_data, agent_id)
-    pillar_events     = _extract_pillar_events(obs_data)
-    citizen_changes   = _extract_citizen_changes(obs_data)
-    activist_movement = _extract_activist_movement(obs_data, agent_id)
-
-    # If all four are empty — one consolidated message
-    all_empty = all(
-        v == "none"
-        for v in [police_action, pillar_events, citizen_changes, activist_movement]
-    )
-    if all_empty:
-        return "Last step: no change in state of any agent nearby — neighbourhood was quiet."
-
-    # Otherwise include only the fields that have content
+    obs = memory_data.get("neighborhood_observations", {})
     lines = []
-    if police_action != "none":
-        lines.append(f"Police action: {police_action}")
-    if pillar_events != "none":
-        lines.append(f"Pillar events: {pillar_events}")
-    if citizen_changes != "none":
-        lines.append(f"Citizen changes: {citizen_changes}")
-    if activist_movement != "none":
-        lines.append(f"Activist movement: {activist_movement}")
+
+    v = _narrate_police_violence(obs)
+    if v: lines.append(v)
+
+    d = _narrate_police_defection(obs)
+    if d: lines.append(d)
+
+    p = _narrate_pillar_events(obs)
+    if p: lines.append(p)
+
+    c = _narrate_citizen_changes(obs)
+    if c: lines.append(c)
+
+    a = _narrate_activist_movement(obs)
+    if a: lines.append(a)
+
+    if not lines:
+        return "Neighbourhood quiet, it is the pause before courage gathers itself."
 
     return "\n".join(lines)
 
 
+# ── Police violence ───────────────────────────────────────────────────────────
 
-def _extract_police_action(obs_data: Dict, agent_id: int) -> str:
-    """
-    Return the most significant police action at T-1.
-    Priority: kill > arrest.  Returns "none" if no repression occurred.
-    """
-    police_acts = obs_data.get("police_actions", [])
+def _narrate_police_violence(obs: Dict) -> str:
+    police_acts = obs.get("police_actions", [])
     kills   = [p for p in police_acts if p.get("event") == "kill"]
     arrests = [p for p in police_acts if p.get("event") == "jail"]
 
+    if not kills and not arrests:
+        return ""
+
+    parts = []
+
     if kills:
         ctx = _safe_ctx(kills[0].get("context", {}))
-        t_type = ctx.get("target_type", "agent")
-        t_id   = ctx.get("target_id", "")
-        t_pos  = ctx.get("target_pos", "")
-        id_str = f" (id {t_id})" if t_id else ""
-        pos_str = f" at {t_pos}" if t_pos else ""
-        n_extra = len(kills) - 1
-        extra   = f" (+{n_extra} more kill(s))" if n_extra > 0 else ""
-        return f"{t_type}{id_str} killed{pos_str}{extra} — moral shock"
+        target_type = ctx.get("target_type", "agent")
+        n = len(kills)
+
+        if target_type == "ActivistAgent":
+            parts.append(
+                f"{n} comrade(s) killed. Moral shock. "
+                f"Sacrifice strengthens resolve." if n == 1 else
+                f"{n} comrades killed. Moral shock. Each death hardens our purpose."
+            )
+        elif target_type == "CitizenAgent":
+            parts.append(
+                f"{n} unarmed citizen(s) killed. Moral shock. "
+                f"Every witness now carries moral obligation." if n == 1 else
+                f"{n} citizens killed. Moral shock. "
+                f"Backfire begins. Violence creates witnesses and reasons to resist."
+            )
+        else:
+            parts.append(f"{n} killed nearby. Moral shock.")
 
     if arrests:
-        ctx = _safe_ctx(arrests[0].get("context", {}))
-        t_type = ctx.get("target_type", "agent")
-        t_id   = ctx.get("target_id", "")
-        t_pos  = ctx.get("target_pos", "")
-        term   = ctx.get("jail_term", "?")
-        id_str = f" (id {t_id})" if t_id else ""
-        pos_str = f" at {t_pos}" if t_pos else ""
-        n_extra = len(arrests) - 1
-        extra   = f" (+{n_extra} more arrest(s))" if n_extra > 0 else ""
-        return f"{t_type}{id_str} arrested{pos_str}, jail_term={term}{extra}"
+        n = len(arrests)
+        if n <= 2:
+            parts.append(f"{n} arrested nearby. Fear spreads, so does outrage.")
+        else:
+            parts.append(f"{n} arrested in a sweep. Mass arrests reveal desperation, not strength.")
 
-    return "none"
+    return " ".join(parts)
 
 
-def _extract_pillar_events(obs_data: Dict) -> str:
-    """
-    Return defection events from nearby pillars at T-1.
-    Includes institution type from the defection context so the activist
-    knows specifically which CANVAS institution crossed the threshold.
-    """
-    pillar_changes = obs_data.get("pillar_changes", [])
+# ── Police defection ──────────────────────────────────────────────────────────
+
+def _narrate_police_defection(obs: Dict) -> str:
+    police_acts = obs.get("police_actions", [])
+    defections = [p for p in police_acts if p.get("event") == "defect"]
+
+    if not defections:
+        return ""
+
+    n = len(defections)
+    if n == 1:
+        return "A police officer defected. Regime grip weakens. Conscience over command."
+    return f"{n} police defected. Regime grip weakens. Coercive capacity eroding."
+
+
+# ── Pillar events ─────────────────────────────────────────────────────────────
+
+_PILLAR_FRAMING = {
+    "Religious Institution":    "Moral authority speaks. Conscience leaves the regime.",
+    "Judiciary Institution":    "Law recoils from injustice. Legitimacy drains.",
+    "Legislative Institution":  "Lawmakers reject their own creation. Self-delegitimisation.",
+    "Business Community":       "Economic support withdrawn. The end accelerates.",
+    "Civil Service":            "State machinery slows. Operators refuse the gears.",
+    "Educational System":       "Teachers declared truth. Students watching. Narrative collapses.",
+    "Local Government":         "Consent fracturing. Local power chooses community over command.",
+    "State-Supported Media":    "Propaganda cracks. State media will not carry the lie.",
+}
+
+
+def _narrate_pillar_events(obs: Dict) -> str:
+    pillar_changes = obs.get("pillar_changes", [])
     defections = [p for p in pillar_changes if p.get("event") == "defect"]
 
     if not defections:
-        return "none"
+        return ""
 
-    parts = []
+    if len(defections) == 1:
+        d = defections[0]
+        ctx = _safe_ctx(d.get("context", {}))
+        inst = ctx.get("institution_type",
+                       d.get("institution_type", "an institution"))
+        framing = _PILLAR_FRAMING.get(inst, "Our methods are working.")
+        return f"{inst} defected. Institutional support crumbling. {framing}"
+
+    inst_names = []
     for d in defections:
-        ctx  = _safe_ctx(d.get("context", {}))
-        inst = ctx.get("institution_type", d.get("institution_type", "unknown institution"))
-        pos  = d.get("position")
-        pos_str = f" at {pos}" if pos else ""
-        parts.append(f"{inst} defected{pos_str}")
+        ctx = _safe_ctx(d.get("context", {}))
+        inst_names.append(ctx.get("institution_type",
+                                  d.get("institution_type", "institution")))
 
-    return "; ".join(parts)
+    return (
+        f"{len(defections)} pillars defected ({', '.join(inst_names)}). "
+        f"Cascade may be forming. Institutional support crumbling."
+    )
 
 
-def _extract_citizen_changes(obs_data: Dict) -> str:
-    """
-    Return the count of citizens who newly became active nonviolent at T-1.
-    "Active" = protest_start or active_nv events.
-    Returns "none" if no citizen activations occurred.
-    """
-    citizen_acts = obs_data.get("citizen_activity", [])
+# ── Citizen changes ───────────────────────────────────────────────────────────
 
-    new_active = [
-        c for c in citizen_acts
-        if c.get("event") in ("protest_start", "active_nv")
-    ]
+def _narrate_citizen_changes(obs: Dict) -> str:
+    citizen_acts = obs.get("citizen_activity", [])
+
+    joined = [c for c in citizen_acts if c.get("event") in ("protest_start", "active_nv")]
     jailed = [c for c in citizen_acts if c.get("event") == "jail"]
     killed = [c for c in citizen_acts if c.get("event") == "kill"]
 
+    if not joined and not jailed and not killed:
+        return ""
+
     parts = []
-    if new_active:
-        n = len(new_active)
-        parts.append(f"+{n} citizen(s) joined nonviolent action")
-    if jailed:
-        parts.append(f"{len(jailed)} citizen(s) arrested")
+
+    if joined:
+        n = len(joined)
+        if n == 1:
+            parts.append("+1 joined the movement. Courage witnessed inspires courage.")
+        elif n <= 3:
+            parts.append(f"+{n} joined the movement. Conscience spreading.")
+        else:
+            parts.append(f"+{n} joined the movement. Critical mass forming.")
+
     if killed:
-        parts.append(f"{len(killed)} citizen(s) killed")
+        n = len(killed)
+        parts.append(f"{n} citizen(s) killed. Backfire. Violence begins movements, not ends them.")
 
-    return "; ".join(parts) if parts else "none"
+    if jailed:
+        n = len(jailed)
+        parts.append(f"{n} citizen(s) arrested. Regime creates witnesses.")
+
+    return " ".join(parts)
 
 
-def _extract_activist_movement(obs_data: Dict, self_id: int) -> str:
-    """
-    Return a summary of other activists visible in the zone at T-1.
-    Focuses on whether coordination partners are present.
-    """
-    other_activists = obs_data.get("other_activists", [])
-    if not other_activists:
-        return "none"
+# ── Activist coordination ────────────────────────────────────────────────────
 
-    active   = [a for a in other_activists if a.get("event") in ("movement_decision", "protest_start", "active_nonviolent", "active_nv")]
-    jailed   = [a for a in other_activists if a.get("event") == "jail"]
-    killed   = [a for a in other_activists if a.get("event") == "kill"]
+def _narrate_activist_movement(obs: Dict) -> str:
+    others = obs.get("other_activists", [])
+    if not others:
+        return ""
+
+    active = [a for a in others if a.get("event") in
+              ("movement_decision", "protest_start", "active_nonviolent", "active_nv")]
+    jailed = [a for a in others if a.get("event") == "jail"]
+    killed = [a for a in others if a.get("event") == "kill"]
+
+    if not active and not jailed and not killed:
+        return ""
 
     parts = []
+
     if active:
         n = len(active)
-        parts.append(f"{n} activist(s) active nearby")
-    if jailed:
-        parts.append(f"{len(jailed)} activist(s) arrested")
+        if n == 1:
+            parts.append("A fellow activist nearby. Coordination possible.")
+        else:
+            parts.append(f"{n} activists converged nearby. We amplify each other.")
+
     if killed:
-        parts.append(f"{len(killed)} activist(s) killed")
+        n = len(killed)
+        parts.append(f"{n} comrade(s) killed. We carry their choice forward.")
 
-    return "; ".join(parts) if parts else "none"
+    if jailed:
+        n = len(jailed)
+        parts.append(f"{n} comrade(s) arrested. We regroup and persist.")
+
+    return " ".join(parts)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SELF REFLECTION — own-action narrative (maps to {{SELF_REFLECTION}})
-#  Unchanged from previous version.
+#  SELF REFLECTION  →  {{SELF_REFLECTION}}
 # ══════════════════════════════════════════════════════════════════════════════
+
+_INTENT = {
+    "citizens":  "to stir the conscience already alive within them",
+    "pillars":   "to place before them the moral cost of complicity",
+    "police":    "to remind them they too have a choice",
+    "activists": "to strengthen our shared resolve",
+}
+
+_ATTRIBUTE = {
+    "Leadership":  "bearing and presence",
+    "Courage":     "visible fearlessness",
+    "Empathy":     "compassionate witness",
+    "Vision":      "articulating what could be",
+    "Resilience":  "stubborn refusal to break",
+    "Faith":       "unshaken conviction",
+}
+
+_METHOD_LABEL = {
+    "protest_and_persuasion": "protest and persuasion",
+    "non-cooperation":       "non-cooperation",
+    "intervention":          "intervention",
+}
+
 
 def generate_gandhian_memory(agent_id: int, memory_data: Dict) -> str:
-    """
-    Produce the activist's self narrative from their own_actions list.
-    Maps to {{SELF_REFLECTION}} in the prompt template.
-
-    Handled events
-    --------------
-    kill              — own death (returns immediately)
-    jail              — imprisoned (returns immediately)
-    active_nonviolent — currently in active NV phase
-    movement_decision — which direction and why the activist moved
-    protest_start     — began a public protest
-    unknown           — preserved with a generic note (future-proof)
-    """
     actions = memory_data.get("own_actions", [])
     if not actions:
-        return "I remained in peaceful observation, staying loyal to the movement."
+        return "I held my ground in quiet witness. Present, steady, rooted."
 
-    is_killed        = False
-    is_jailed        = False
-    jail_duration    = ""
-    is_activeNV      = False
-    is_recruiting    = False
-    recovery_duration = ""
-    movement_intent  = ""
+    is_killed = False
+    is_jailed = False
+    jail_term = 0
+    is_active_nv = False
+    movement_line = ""
     protest_declared = False
-    unknown_events:  List[str] = []
-
-    STRATEGY_INTENT = {
-        "citizens":  "awaken their conscience",
-        "pillars":   "withdraw their support from the regime",
-        "police":    "appeal to their humanity",
-        "activists": "strengthen our unity",
-    }
-
-    def _to_duration(n: int) -> str:
-        if n <= 3:  return "briefly"
-        if n <= 7:  return "for an extended period"
-        return "for a sustained period"
+    unknown_events: List[str] = []
 
     for act in actions:
         event = act.get("event", "")
-        ctx   = _safe_ctx(act.get("context", {}))
+        ctx = _safe_ctx(act.get("context", {}))
 
         if event == "kill":
             is_killed = True
-
         elif event == "jail":
-            is_jailed     = True
-            jail_duration = _to_duration(int(ctx.get("jailTerm_left", 0)))
-
+            is_jailed = True
+            jail_term = int(ctx.get("jailTerm_left", 0))
         elif event == "active_nonviolent":
-            is_activeNV       = True
-            recovery_duration = _to_duration(int(ctx.get("StepsToEnd", 0)))
-
+            is_active_nv = True
         elif event == "movement_decision":
             target = (act.get("target") or "community").lower()
-            citizen_cta = act.get("citizen_cta")
-            attribute  = act.get("primary_attribute") or "Leadership"
-            intent = STRATEGY_INTENT.get(target, "deepen our commitment to truth")
-            movement_intent = f"I moved toward {target} to {intent} via {attribute}"
+            attribute = act.get("primary_attribute") or "Leadership"
+            method = act.get("non_violent_action_method") or "nonviolent action"
+            method = _METHOD_LABEL.get(method, method)
 
+            intent = _INTENT.get(target, "to serve the cause of truth")
+            attr_phrase = _ATTRIBUTE.get(attribute, attribute.lower())
+
+            movement_line = (
+                f"Guided by {attr_phrase}, I approached {target} "
+                f"through {method}, {intent}."
+            )
         elif event == "protest_start":
             protest_declared = True
-
         else:
             unknown_events.append(event)
 
-    narrative: List[str] = []
-
+    # DEATH
     if is_killed:
         return (
-            "I was killed by the police. My time in this movement has ended, "
-            "but the cause endures — let those who remain carry it forward."
+            "I was killed. The cause endures beyond me. "
+            "Let my death be proof they have no answer except violence."
         )
 
+    # IMPRISONMENT
     if is_jailed:
-        return (
-            f"I am imprisoned {jail_duration} and cannot move, act, or influence anyone. "
-            f"Any activist standing near me is wasting their position — "
-            f"my presence offers nothing to the movement right now. "
-            f"Fellow activists must move away and find where they are needed."
-        )
+        if jail_term <= 2:
+            return "I am imprisoned but release is near. I endure. The truth struck home."
+        elif jail_term <= 5:
+            return (
+                f"I am imprisoned for {jail_term} steps. I endure. "
+                f"Fellow activists, do not wait near me. Go where you are needed."
+            )
+        else:
+            return (
+                f"I am imprisoned for {jail_term} steps. I endure. "
+                f"Fellow activists, do not wait near me. "
+                f"No one is indispensable. My comrades know what to do."
+            )
 
+    parts = []
 
-    if is_activeNV:
-        narrative.append("I am taking active part in this nonviolent movement.")
+    if is_active_nv:
+        parts.append("I stand firm in active nonviolent resistance.")
 
-    if movement_intent:
-        prefix = "Keeping this intent, " if (is_activeNV or is_recruiting) else ""
-        narrative.append(f"{prefix}{movement_intent}.")
+    if movement_line:
+        parts.append(movement_line)
 
     if protest_declared:
-        narrative.append("I stepped forward and began a public protest.")
+        parts.append("I stepped into public protest. Dissent made visible.")
 
-    if is_activeNV and not movement_intent:
-        narrative.append(
-            "I am holding this space — "
-            "present among those who suffer, visible and committed."
-        )
+    if is_active_nv and not movement_line and not protest_declared:
+        parts.append("I hold this ground. Present, visible, committed.")
 
     if unknown_events:
-        narrative.append(
-            f"[Note: unrecognised event(s) occurred this step: {', '.join(set(unknown_events))}]"
-        )
+        parts.append(f"[Unrecognised. {', '.join(set(unknown_events))}]")
 
-    return " ".join(narrative) if narrative else "I held my ground in silent witness."
+    return " ".join(parts) if parts else "I held my ground in silent witness."
