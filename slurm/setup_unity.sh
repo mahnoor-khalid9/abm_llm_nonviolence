@@ -62,7 +62,7 @@ echo "[4/6] Setting environment variables..."
 # We use export here so the current shell and the following Python block see them
 export HF_HOME="${MODEL_CACHE}"
 export TRANSFORMERS_CACHE="${MODEL_CACHE}"
-export HF_TOKEN="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"
+export HF_TOKEN="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"
 
 mkdir -p "${MODEL_DIR}"
 mkdir -p "${MODEL_CACHE}"
@@ -82,7 +82,7 @@ echo ""
 echo "[5/6] Downloading Llama 3.3 70B weights..."
 
 # CRITICAL: These must be EXPORTED so the Python subprocess can see them
-export HF_TOKEN="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"
+export HF_TOKEN="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"
 export MODEL_DIR="/work/pi_lfiondella_umassd_edu/Mahnoor/models"
 export HF_HOME="${WORK_DIR}/huggingface_cache"
 
