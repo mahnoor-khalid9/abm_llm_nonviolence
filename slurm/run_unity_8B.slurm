@@ -93,7 +93,7 @@ if torch.cuda.is_available():
     print(f'Device: {torch.cuda.get_device_name(0)}')
 "
 
-export HF_TOKEN="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"
+export HF_TOKEN="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"
 export HF_HOME="${MODEL_CACHE}"
 export TRANSFORMERS_CACHE="${MODEL_CACHE}"
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
