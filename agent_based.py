@@ -420,8 +420,25 @@ class ActivistAgent(NVBaseAgent):
             elif a['inProtest']:        cat = "protesting"
             else:                       cat = "active_nonviolent"
             directions[d]["activists"][cat] = directions[d]["activists"].get(cat, 0) + 1
+         # ── Strip empties before returning ────────────────────────────
+        return self._strip_empty_context(
+            {"my_position": my_pos, "neighborhood": directions}
+        )
 
-        return {"my_position": my_pos, "neighborhood": directions}
+    
+    @staticmethod
+    def _strip_empty_context(context):
+        """Remove empty dicts and empty lists from neighbourhood context."""
+        stripped = {"my_position": context["my_position"], "neighborhood": {}}
+        for direction, data in context["neighborhood"].items():
+            clean = {}
+            for key, val in data.items():
+                if val:
+                    clean[key] = val
+            if clean:
+                stripped["neighborhood"][direction] = clean
+        return stripped
+
 
     # ── Rule NV ───────────────────────────────────────────────────────────────
 
@@ -728,7 +745,6 @@ class ActivistAgent(NVBaseAgent):
 
 
 # ── PoliceAgent ───────────────────────────────────────────────────────────────
-
 class PoliceAgent(NVBaseAgent):
     def __init__(self, unique_id, agent_type, model):
         super().__init__(unique_id, agent_type, model)

@@ -10,14 +10,14 @@ Usage (from SLURM script)
         --n_runs      10 \\
         --start_run   0 \\
         --provider    vllm \\
-        --model       meta-llama/Meta-Llama-3.1-8B-Instruct \\
+        --model       /work/pi_lfiondella_umassd_edu/Mahnoor/models/Llama-3.1-8B-Instruct \\
         --vllm_port   8000 \\
-        --prompt_type ZeroShot \\
+        --prompt_type CoT \\
         --output_dir  SimulationLogs
 
 Usage (local testing)
 ---------------------
-    python run_cluster.py --n_runs 2 --provider vllm --prompt_type ZeroShot
+    python run_cluster.py --n_runs 2 --provider vllm --prompt_type CoT
 """
 
 from __future__ import annotations
@@ -38,16 +38,16 @@ def parse_args():
                    choices=["vllm", "huggingface", "gemini", "openai"],
                    help="LLM provider")
     p.add_argument("--model",       type=str,
-                   default="meta-llama/Meta-Llama-3.1-8B-Instruct",
+                   default="/work/pi_lfiondella_umassd_edu/Mahnoor/models/Llama-3.3-70B-Instruct",
                    help="Model ID or path")
     p.add_argument("--vllm_port",   type=int,   default=8000,
                    help="vLLM server port (vllm provider only)")
-    p.add_argument("--prompt_type", type=str,   default="ZeroShot",
+    p.add_argument("--prompt_type", type=str,   default="CoT",
                    choices=["ZeroShot", "CoT"],
                    help="Prompt type")
     p.add_argument("--output_dir",  type=str,   default="SimulationLogs",
                    help="Base directory for all log output")
-    p.add_argument("--max_workers", type=int,   default=1,
+    p.add_argument("--max_workers", type=int,   default=10,
                    help="Parallel workers (1=sequential, >1=parallel)")
     p.add_argument("--max_steps",   type=int,   default=200)
     p.add_argument("--pillar_strat",type=int,   default=3,
@@ -57,7 +57,6 @@ def parse_args():
 
 
 # ── Provider factory ──────────────────────────────────────────────────────────
-
 def build_chat_model(args):
     """
     Instantiate the correct provider and return a ChatModel-compatible wrapper.
@@ -95,13 +94,12 @@ def build_chat_model(args):
 
     return ChatModel(
         provider=args.provider,
-        use_memory=(args.prompt_type != "ZeroShot"),
+        use_memory=True,
         **provider_kwargs,
     )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-
 def main():
     args = parse_args()
 
@@ -112,7 +110,7 @@ def main():
     model_short = args.model.split("/")[-1].lower().replace(".", "-")
 
     log_cfg = LogConfig(
-        provider    = f"{args.provider}_{model_short}",
+        provider    = f"{args.provider}",
         prompt_type = args.prompt_type,
         memory      = args.memory,
         vision      = "vision-4",
@@ -136,7 +134,7 @@ def main():
     orchestrator = RunOrchestrator(
         base_config  = log_cfg,
         params       = params,
-        max_workers  = 4,      # 4 parallel runs → vLLM batches their LLM calls
+        max_workers  = args.max_workers,      # 4 parallel runs → vLLM batches their LLM calls
         start_run_id = args.start_run,
     )
 

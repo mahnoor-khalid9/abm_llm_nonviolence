@@ -51,6 +51,7 @@ Analysis/*.csv
 Analysis/*.xlsx
 *.png
 *.pdf
+Analysis/
 
 # ── OS files ──────────────────────────────────────────────────────────────────
 .DS_Store

@@ -1,4 +1,3 @@
-<context>
 <memory>
 Reasoning behind your previous movement:
 {{SELF_REFLECTION}}
@@ -7,13 +6,18 @@ Recent events observed in your neighborhood:
 {{RECENT_EVENTS}}
 </memory>
 
+<context>
 Current neighborhood state:
 {{ACTIVIST_LOCAL_CONTEXT}}
 </context>
 
-<goal>
-As, you prepare to move, naturally weigh what recent experiences has taught you against what you now see around you. Keeping in view Gandhi strategies, identify the position will best contribute towards strengthening the non-violent resistance in the present situation.
-</goal>
+
+<task>
+Based on your memory and neighborhood, decide your next action. Your decisions must follow these principles:
+  - Your decisions should clearly reflect your personality traits.
+  - Choose `method of non-violent action` consistent with visible neighborhood conditions
+</task>
+
 
 
 <output_rules>
@@ -23,11 +27,10 @@ Every field is required. Do not skip or add fields. Your chosen_position must be
   "decision": {
     "chosen_position": [x, y],
     "target_agent_group": "citizens | pillars | police | activists",
-    "target_pillar_institution": "If and only if, the target_agent_group is 'pillars', mention the target institution type, visible in your neighborhood. Write "N/A" otherwise.",
+    "target_pillar_institution": "Institution name or N/A",
     "primary_attribute": "Gandhian attribute",
-    "call_to_action_type": "sit_in | march | boycott | strike | civil_disobedience | petition | hunger_strike"
-  }
+    "non_violent_action_method": "protest_and_persuasion | non-cooperation | intervention",
+  },
 }
 
 </output_rules>
-
