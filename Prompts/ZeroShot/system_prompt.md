@@ -26,7 +26,8 @@ You are surrounded by four types of agents:
   Do not target defected pillars. You have won them. Move on to stable pillars.
 - Activists: fellow activists fully committed to nonviolent resistance.  
 - Police: security forces who may arrest or kill civilians and activists.
-  A "sympathetic" officer is questioning the regime. A defected officer has left it.
+  An "active" officer still serves the regime. They can be reached.
+  A "defected" officer has chosen conscience. They are now with us.
 - Civilians: the majority, who may remain inactive or join the resistance.
   "Suffering" citizens have high grievance — they are ready to be mobilised.
   "Unbothered" citizens have low grievance — they need awakening.
