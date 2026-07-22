@@ -23,15 +23,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # OPTION B: Small Model (Commented out with ## so SLURM ignores them)
 # ─────────────────────────────────────────────────────────────────────────────
-#SBATCH --job-name=nv_resistance_qwen_8B
+#SBATCH --job-name=nv_resistance_ministral_8B_zeroshot
 #SBATCH --partition=gpu
 #SBATCH --nodes=1                  
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=15
+#SBATCH --cpus-per-task=16
 #SBATCH --constraint=vram48
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
-#SBATCH --time=24:00:00
+#SBATCH --time=4:00:00
 #SBATCH --output=logs/sim_%j.out
 #SBATCH --error=logs/sim_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -43,8 +43,8 @@
 # =============================================================================
 
 N_RUNS=100
-PARALLEL_RUNS=10
-GPU_BATCH_SIZE=10      
+PARALLEL_RUNS=25
+GPU_BATCH_SIZE=25      
 START_RUN=1
 VLLM_PORT=8000
 MAX_WAIT=600
@@ -58,8 +58,8 @@ MODEL_CACHE="${WORK_DIR}/huggingface_cache"
 PROJECT_DIR="${HOME_DIR}/pyabm-llm"
 VENV_PATH="${HOME_DIR}/venv_abm_llm"
 
-MODEL_PATH="${WORK_DIR}/models/Ministral-3-8B-Instruct"
-SERVED_MODEL_NAME="Ministral-3-8B-Instruct"
+MODEL_PATH="${WORK_DIR}/models/Ministral-3-8B-Reasoning-2512"
+SERVED_MODEL_NAME="Ministral-3-8B-Reasoning-2512"
 OUTPUT_DIR="${WORK_DIR}/SimulationLogs/${SERVED_MODEL_NAME}_${PROMPT_TYPE}"
 
 
@@ -76,8 +76,32 @@ echo "  Runs:    $START_RUN → $((START_RUN + N_RUNS - 1))"
 echo "=========================================="
 
 module purge
+# 1. Point the system to the URI module directory
+module use /modules/uri_modulefiles
+
+# 2. Now you can load it successfully
+module load compiler/GCC/12.3.0
 module load python/3.11.7
 module load cuda/12.1
+
+# 3. Clean the cache to remove the failed GCC 13 build logs
+rm -rf ~/.cache/flashinfer
+
+# It helps to explicitly point to the compilers
+export CC=$(which gcc)
+export CXX=$(which g++)
+
+# Python was compiled with GCC 13 — force NVCC to accept it
+export NVCC_ALLOW_UNSUPPORTED_COMPILER=1
+
+
+echo "=== Module Check ==="
+which gcc
+gcc --version
+which nvcc
+nvcc --version
+echo "=== End Module Check ==="
+
 
 source "${VENV_PATH}/bin/activate"
 echo "Python: $(which python) — $(python --version)"
@@ -93,7 +117,7 @@ if torch.cuda.is_available():
     print(f'Device: {torch.cuda.get_device_name(0)}')
 "
 
-export HF_TOKEN="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"
+export HF_TOKEN="HF_TOKEN=hf_------------"
 export HF_HOME="${MODEL_CACHE}"
 export TRANSFORMERS_CACHE="${MODEL_CACHE}"
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
@@ -115,12 +139,17 @@ if lsof -i :${VLLM_PORT} > /dev/null 2>&1; then
     exit 1
 fi
 
+export VLLM_USE_V1=0
+export VLLM_ATTENTION_BACKEND=TRITON_ATTN
+export EXTRA_NVCCFLAGS="--allow-unsupported-compiler"
+export VLLM_USE_FLASHINFER=0
+
 # NO trailing spaces after backslashes
 python -m vllm.entrypoints.openai.api_server \
     --model "$MODEL_PATH" \
     --tokenizer "$MODEL_PATH" \
     --served-model-name "$SERVED_MODEL_NAME" \
-    --dtype bfloat16 \
+    --dtype auto \
     --tensor-parallel-size 1 \
     --max-model-len 4096 \
     --max-num-seqs $GPU_BATCH_SIZE \
@@ -129,6 +158,7 @@ python -m vllm.entrypoints.openai.api_server \
     --no-enable-log-requests \
     --port $VLLM_PORT \
     --trust-remote-code \
+    --enforce-eager \
     > "${OUTPUT_DIR}/vllm_${SLURM_JOB_ID}.log" 2>&1 &
 
 VLLM_PID=$!

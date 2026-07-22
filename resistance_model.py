@@ -435,23 +435,23 @@ class NVResistanceModel(mesa.Model):
             self.logger.log_model_init(
                 f"PILLAR_TYPE_COUNTS: {json.dumps(type_counts)}"
             )
+        
+            # ── Rank lookup for defection events ──────────────────────────
+            self._pillar_rank: Dict[int, int] = {
+                entry["id"]: rank
+                for rank, entry in enumerate(pillar_registry, 1)
+            }
+
+
             # ── Pillar defection ranking (logging only) ───────────────────
-            from collections import defaultdict
-            thresholds_by_type = defaultdict(list)
-            for entry in pillar_registry:
-                thresholds_by_type[entry["institution"]].append(entry["threshold"])
+            self.logger.log_model_init("PILLAR_DEFECTION_RANKING (easiest to hardest)")
+            for rank, entry in enumerate(pillar_registry, 1):
+                self.logger.log_model_init(
+                    f"  RANK={rank:>2d}/24 | threshold={entry['threshold']:.4f} | "
+                    f"id={entry['id']} | institution={entry['institution']}"
+                )
 
-            ranked = sorted(
-                thresholds_by_type.items(),
-                key=lambda x: sum(x[1]) / len(x[1])
-            )
-
-            rank_lines = ["PILLAR_DEFECTION_RANKING (easiest to hardest)"]
-            for rank, (inst, _) in enumerate(ranked, 1):
-                rank_lines.append(f"  {rank}. {inst}")
-            self.logger.log_model_init("\n".join(rank_lines))
-
-
+            
         # ── Post-placement ────────────────────────────────────────────────────
         self.activist_empty_spaces = {}
         for agent in self.schedule.agents:
@@ -815,6 +815,9 @@ class NVResistanceModel(mesa.Model):
                         event="DEFECTION",
                         institution=a.institution_type,
                         threshold=f"{a.defectThreshold:.4f}",
+                        id=a.unique_id,
+                        rank=self._pillar_rank.get(a.unique_id, "?"),
+                        rank_of=len(self._pillar_registry),
                     )
 
         return per_type

@@ -359,13 +359,20 @@ class PositionBlock(BaseModel):
 
 # ── Full Reasoning Chain ──────────────────────────────────────
 
-class CoTReasoning(BaseModel):
+class CoTReasoning_3Step(BaseModel):
     step_1_memory:   MemoryBlock
     step_2_survey:   SurveyBlock
     step_3_position: PositionBlock
 
 
-# ── Top-level Output ──────────────────────────────────────────
+
+class CoTReasoning(BaseModel):
+    observation: str = Field(
+        description="1 sentence, max 15 words. What do you see that matters most?"
+    )
+    strategic_intent: str = Field(
+        description="1 sentence, max 15 words. Why are you choosing this target?"
+    )
 
 class GandhianMovementOutputCoT(BaseModel):
     reasoning: CoTReasoning

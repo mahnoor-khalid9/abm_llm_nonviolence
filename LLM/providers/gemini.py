@@ -33,11 +33,12 @@ class GeminiProvider(BaseProvider):
         temperature: float = 0.0,
         thinking_budget: int = -1,   # -1 = enabled (2.5 Pro), 0 = disabled
     ):
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("GOOGLE_CLOUD_API_KEY")
         if not api_key:
-            raise EnvironmentError("Missing GEMINI_API_KEY environment variable.")
+            raise EnvironmentError("Missing GOOGLE_CLOUD_API_KEY environment variable.")
 
-        self.client          = genai.Client(api_key=api_key)
+        self.client          = genai.Client(vertexai=True,
+                                            api_key=api_key)
         self.active_model    = model or self.DEFAULT_MODEL
         self.temperature     = temperature
         self.thinking_budget = thinking_budget
