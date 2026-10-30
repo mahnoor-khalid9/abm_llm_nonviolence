@@ -123,6 +123,32 @@ The logs support evaluation at two levels:
 
 The same pipeline works for any LLM and either prompting method, so results can be compared across models and prompting methods.
 
+### Rule-based strategies vs. LLM-guided activists
+
+The baseline model has three rule-based activist strategies (`PillarProxStrat`):
+
+- **0, Random:** move to a random free cell.
+- **1, Nearest pillar:** move toward the closest visible pillar.
+- **2, Weakest pillar:** use extended vision to find the pillar with the **lowest defection threshold** and move toward it.
+
+Strategy 2 gives the highest success rates in the baseline model. It also depends on something no real activist has: it reads each pillar's internal loyalty threshold directly.
+
+LLM-guided activists never see that threshold. They only see an institution's type (e.g. Judiciary, Civil Service) and whether it is still `stable` or has `defected`, and they decide which pillar to approach based on what each institution does for the regime.
+
+<p align="center">
+  <img src="docs/baseline_strategies_success.png" alt="Success probability vs. peak participation for the baseline's rule-based activist strategies 0, 1 and 2, against historical NAVCO data" width="480">
+</p>
+
+*Rule-based activist strategies of the baseline model (Chenoweth et al., 2022): success probability against log₁₀ peak participation, compared with historical data.*
+
+<p align="center">
+  <img src="docs/llm_success_curves.png" alt="Success probability vs. peak participation for LLM-guided activists, three LLMs under Zero-Shot and Chain-of-Thought prompting, against NAVCO 1.2" width="900">
+</p>
+
+*LLM-guided activists (strategy 3): three open-weight LLMs under Zero-Shot and Chain-of-Thought prompting, 100 runs each, compared with NAVCO 1.2. Dots show the win or loss of individual runs.*
+
+Above about 1% peak participation (log₁₀ ≥ 0), the LLM-guided curves reach the same high success levels as the weakest-pillar strategy (around 90% and above). The LLM activists get there by reasoning over observable, institution-level information, without being given the regime's hidden loyalty values. At the lowest participation levels, their curves start lower, closer to the random and nearest-pillar strategies and to the historical baseline.
+
 ---
 
 ## Repository layout
